@@ -264,8 +264,8 @@ class driver
             * @var  array  append Array of properties to be send to the post_message function
             * @since 1.0.1
             */
-            $vars = array('item', 'append');
-            extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_atom_append', compact($vars)));      
+            $vars = [];
+            extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_atom_append', $vars));
 
             // Add it to the list
             $return[] = $append;
@@ -310,8 +310,8 @@ class driver
             * @var  array  append Array of properties to be send to the post_message function
             * @since 1.0.1
             */
-            $vars = array('item', 'append');
-            extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_rdf_append', compact($vars)));      
+            $vars = [];
+            extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_rdf_append', $vars));
 
             // Add it to the list
             $return[] = $append;            
@@ -353,8 +353,8 @@ class driver
             * @var  array  append Array of properties to be send to the post_message function
             * @since 1.0.1
             */
-            $vars = array('item', 'append');
-            extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_rss_append', compact($vars)));      
+            $vars = [];
+            extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_rss_append', $vars));
 
             // Add it to the list
             $return[] = $append;
@@ -601,7 +601,7 @@ class driver
 		{
 			// Most probaly a SimpleXMLElement
 			$prop_ary = (array) $prop;
-			$prop = $prop_ary[0];
+			$prop = $prop_ary[0] ?? '';
 		}
 		$prop = (string) $prop;
 		return html_entity_decode($prop);
@@ -774,8 +774,8 @@ class driver
         * @var  string  $html_string input string
         * @since 1.0.12
         */
-        $vars = array('item', 'append');
-        extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.html2bbcode_convert', compact($vars)));   
+        $vars = [];
+        extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.html2bbcode_convert', $vars));
         
 		// Replace main stuff and strip anything else
 		return strip_tags(preg_replace(array_keys($convert), array_values($convert), $html_string));
