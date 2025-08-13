@@ -148,7 +148,7 @@ class driver
         $url= html_entity_decode($url);
         if (!function_exists('curl_init') || $force_file_get_contents) 
         {
-            $opts['http']['timout'] = (int) $timeout;
+            $opts['http']['timeout'] = (int) $timeout;
             $context = stream_context_create($opts);
             $data = @file_get_contents($url, false, $context); // Suppress errors
         }
