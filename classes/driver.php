@@ -13,6 +13,16 @@ namespace ger\feedpostbot\classes;
 
 class driver
 {
+	const FEED_TIMEOUT_DEFAULT = 10;
+	const FEED_TIMEOUT_PARSE = 3;
+	const LOG_CRITICAL = 'critical';
+	const LOG_ADMIN = 'admin';
+	const LOG_FEED_FETCHED = 'FPB_LOG_FEED_FETCHED';
+	const LOG_FEED_TIMEOUT = 'FPB_LOG_FEED_TIMEOUT';
+	const LOG_FEED_ERROR = 'FPB_LOG_FEED_ERROR';
+	const LANG_READ_MORE = 'FPB_READ_MORE';
+	const LANG_SOURCE = 'FPB_SOURCE';
+
 	protected $config;
 	protected $config_text;
 	protected $user;
@@ -28,16 +38,15 @@ class driver
 	/**
 	 * Constructor
 	 *
-	 * @param \phpbb\config\config						$config					Config object
-	 * @param \phpbb\config\db_text						$config_text			Config text object
-	 * @param \phpbb\request\request_interface			$request				Request object
-	 * @param \phpbb\user								$user					User object
-	 * @param \phpbb\language\language					$language				Language object
-	 * @param \phpbb\auth\auth							$auth					Auth object
-	 * @param \phpbb\db\driver\driver_interface			$db						DB object
-	 * @param string									$phpbb_root_path
-	 * @param string									$php_ext
-	 * @param \phpbb\event\dispatcher					$phpbb_dispatcher
+	 * @param \phpbb\config\config							$config				Config object
+	 * @param \phpbb\config\db_text							$config_text		Config text object
+	 * @param \phpbb\user									$user				User object
+	 * @param \phpbb\language\language						$language			Language object
+	 * @param \phpbb\auth\auth								$auth				Auth object
+	 * @param \phpbb\db\driver\driver_interface				$db					DB object
+	 * @param string										$phpbb_root_path
+	 * @param string										$php_ext
+	 * @param \phpbb\event\dispatcher						$phpbb_dispatcher
 	 */
 	public function __construct(\phpbb\config\config $config,  \phpbb\config\db_text $config_text, \phpbb\user $user, \phpbb\language\language $language, \phpbb\auth\auth $auth, \phpbb\db\driver\driver_interface $db, \phpbb\log\log $log, $phpbb_root_path, $php_ext, \phpbb\event\dispatcher $phpbb_dispatcher)
 	{
@@ -65,8 +74,17 @@ class driver
 		}
 		else
 		{
-            $this->current_state = json_decode($ct, true);
-            $this->check_state_parameters();
+            $decoded = json_decode($ct, true);
+            if ($decoded === null && json_last_error() !== JSON_ERROR_NONE)
+            {
+                // Invalid JSON, reset to false
+                $this->current_state = false;
+            }
+            else
+            {
+                $this->current_state = $decoded;
+                $this->check_state_parameters();
+            }
         }
         return $this->current_state;
 	}
@@ -143,7 +161,7 @@ class driver
      * @param bool $force_file_get_contents
      * @return string with content data or false
      */
-    private function get_content($url, $timeout = 10, $useragent_override = false, $force_file_get_contents = false)
+    private function get_content($url, $timeout = self::FEED_TIMEOUT_DEFAULT, $useragent_override = false, $force_file_get_contents = false)
     {
         $url= html_entity_decode($url);
         if (!function_exists('curl_init') || $force_file_get_contents) 
@@ -187,7 +205,7 @@ class driver
 	 * @param int $timeout
 	 * @return boolean
 	 */
-	private function parse_feed($url, $type, $timeout = 3)
+	private function parse_feed($url, $type, $timeout = self::FEED_TIMEOUT_PARSE)
 	{
         // Don't throw errors but log them instead
         libxml_use_internal_errors(true);
@@ -195,8 +213,8 @@ class driver
         $data = $this->get_content($url, $timeout);
         if (!$data)
 		{
-			$this->log->add('critical', $this->user->data['user_id'], $this->user->ip, 'FPB_LOG_FEED_TIMEOUT', time(), array($url . ' (' . $timeout . ' s)'));
-			return false;
+			$this->log->add(self::LOG_CRITICAL, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_TIMEOUT, time(), array($url . ' (' . $timeout . ' s)'));
+			return array(); // Return empty array instead of false
 		}
 		else
 		{
@@ -215,7 +233,7 @@ class driver
         if (!empty($data))
         {
 			// Determine feed type and proceed accordingly
-			if ((stripos($data, 'application/atom+xml')!== false) || preg_match('/xmlns="(.+?)Atom"/i', $data))
+			if ((stripos($data, 'application/atom+xml')!== false) || preg_match('/xmlns=\"(.+?)Atom\"/i', $data))
 			{
 				return 'atom';
 			}
@@ -238,11 +256,12 @@ class driver
 	 */
 	private function parse_atom($data, $url)
 	{
+		$return = array(); // Initialize return array
 		$content = simplexml_load_string($data, 'SimpleXMLElement', LIBXML_NOCDATA);
 		if ($content === false)
 		{
             $this->log_xml_error($url);
-			return false;
+			return array(); // Return empty array instead of false
 		}
         $ns = $content->getNamespaces(true);
 
@@ -271,7 +290,7 @@ class driver
             $return[] = $append;
 		}
 
-		$this->log->add('admin', $this->user->data['user_id'], $this->user->ip, 'FPB_LOG_FEED_FETCHED', time(), array($url));
+		$this->log_feed_fetched($url);
 		return $return;
 	}
 
@@ -282,6 +301,7 @@ class driver
 	 */
 	private function parse_rdf($data, $url)
 	{
+		$return = array(); // Initialize return array
 		// RDF default hasn't dates. Most use a DC or SY namespace but SimpleXML doesn't handle those
 		$find = array('dc:date>', 'sy:date>');
         
@@ -289,7 +309,7 @@ class driver
 		if ($content === false)
 		{
             $this->log_xml_error($url);
-			return false;
+			return array(); // Return empty array instead of false
 		}
         $ns = $content->getNamespaces(true);
         
@@ -316,7 +336,7 @@ class driver
             // Add it to the list
             $return[] = $append;            
 		}
-		$this->log->add('admin', $this->user->data['user_id'], $this->user->ip, 'FPB_LOG_FEED_FETCHED', time(), array($url));
+		$this->log_feed_fetched($url);
 		return $return;
 	}
 
@@ -327,11 +347,12 @@ class driver
 	 */
 	private function parse_rss($data, $url)
 	{
+		$return = array(); // Initialize return array
 		$content = simplexml_load_string($data, 'SimpleXMLElement', LIBXML_NOCDATA);
 		if ($content === false)
 		{
             $this->log_xml_error($url);
-			return false;
+			return array(); // Return empty array instead of false
 		}
         $ns = $content->getNamespaces(true);
 
@@ -359,7 +380,7 @@ class driver
             // Add it to the list
             $return[] = $append;
 		}
-		$this->log->add('admin', $this->user->data['user_id'], $this->user->ip, 'FPB_LOG_FEED_FETCHED', time(), array($url));
+		$this->log_feed_fetched($url);
 		return $return;
 		
 	}
@@ -407,7 +428,8 @@ class driver
 	public function fetch_items($items, $source_id)
 	{
 		$posted = 0;
-		if (empty($items))
+		// Improved check for items to handle false values properly
+		if (empty($items) || !is_array($items))
 		{
 			return $posted;
 		}
@@ -419,17 +441,20 @@ class driver
 		);
 
         $to_post = array();
-		foreach($items as $item)
-		{
-			if ($this->is_handled($item, $this->current_state[$source_id]['latest']))
+		// Added proper check before foreach
+		if (!empty($items) && is_array($items)) {
+			foreach($items as $item)
 			{
-				// We've had this one and all below
-				$this->current_state[$source_id]['latest'] = $new_latest;
-				break;
-			}
-			else
-			{
-				$to_post[] = $item;
+				if ($this->is_handled($item, $this->current_state[$source_id]['latest']))
+				{
+					// We've had this one and all below
+					$this->current_state[$source_id]['latest'] = $new_latest;
+					break;
+				}
+				else
+				{
+					$to_post[] = $item;
+				}
 			}
 		}
 		if (!empty($to_post))
@@ -500,7 +525,11 @@ class driver
 		}
 		if (!function_exists('submit_post'))
 		{
-			include($this->phpbb_root_path . 'includes/functions_posting.' . $this->php_ext);
+			$include_result = include($this->phpbb_root_path . 'includes/functions_posting.' . $this->php_ext);
+			if (!$include_result || !function_exists('submit_post'))
+			{
+				return false;
+			}
 		}
         $source = $this->current_state[$source_id];
         
@@ -518,7 +547,7 @@ class driver
 			$post_text = $this->html2bbcode($this->closetags($this->character_limiter($description, $source['textlimit'])));
             if (!empty($source['append_link']))
             {
-                $post_text .= "\n\n" . '[url=' . $rss_item['link'] . ']' . $this->user->lang('FPB_READ_MORE') . '[/url]';
+                $post_text .= "\n\n" . '[url=' . $rss_item['link'] . ']' . $this->user->lang(self::LANG_READ_MORE) . '[/url]';
             }
 		}
 		else
@@ -526,7 +555,7 @@ class driver
 			$post_text = $this->html2bbcode($description);
             if (!empty($source['append_link']))
             {
-                $post_text .= "\n\n" . $this->user->lang('FPB_SOURCE') . ' [url]' .  $rss_item['link'] . '[/url]';
+                $post_text .= "\n\n" . $this->user->lang(self::LANG_SOURCE) . ' [url]' .  $rss_item['link'] . '[/url]';
             }
 		}
 
@@ -539,27 +568,27 @@ class driver
 
             $data = array(
                 // General Posting Settings
-                'forum_id'			 => $source['forum_id'], // The forum ID in which the post will be placed. (int)
-                'topic_id'			 => 0, // Post a new topic or in an existing one? Set to 0 to create a new one, if not, specify your topic ID here instead.
-                'icon_id'			 => false, // The Icon ID in which the post will be displayed with on the viewforum, set to false for icon_id. (int)
+                'forum_id'		 => $source['forum_id'], // The forum ID in which the post will be placed. (int)
+                'topic_id'		 => 0, // Post a new topic or in an existing one? Set to 0 to create a new one, if not, specify your topic ID here instead.
+                'icon_id'		 => false, // The Icon ID in which the post will be displayed with on the viewforum, set to false for icon_id. (int)
                 // Defining Post Options
-                'enable_bbcode'		 => true, // Enable BBcode in this post. (bool)
+                'enable_bbcode'	 => true, // Enable BBcode in this post. (bool)
                 'enable_smilies'	 => true, // Enabe smilies in this post. (bool)
-                'enable_urls'		 => true, // Enable self-parsing URL links in this post. (bool)
-                'enable_sig'		 => true, // Enable the signature of the poster to be displayed in the post. (bool)
+                'enable_urls'	 => true, // Enable self-parsing URL links in this post. (bool)
+                'enable_sig'	 => true, // Enable the signature of the poster to be displayed in the post. (bool)
                 // Message Body
-                'message'			 => $post_text, // Your text you wish to have submitted. It should pass through generate_text_for_storage() before this. (string)
-                'message_md5'		 => md5($post_text), // The md5 hash of your message
+                'message'		 => $post_text, // Your text you wish to have submitted. It should pass through generate_text_for_storage() before this. (string)
+                'message_md5'	 => md5($post_text), // The md5 hash of your message
                 // Values from generate_text_for_storage()
                 'bbcode_bitfield'	 => $bitfield, // Value created from the generate_text_for_storage() function.
-                'bbcode_uid'		 => $uid, // Value created from the generate_text_for_storage() function.    
+                'bbcode_uid'	 => $uid, // Value created from the generate_text_for_storage() function.    
                 // Other Options
                 'post_edit_locked'	 => 0, // Disallow post editing? 1 = Yes, 0 = No
-                'topic_title'		 => $title,
-                'notify_set'		 => true, // (bool)
-                'notify'			 => true, // (bool)
-                'post_time'			 => empty($source['curdate']) ? strtotime($rss_item['pubDate']) : 0, // Set a specific time, use 0 to let submit_post() take care of getting the proper time (int)
-                'forum_name'		 => $this->get_forum_name($source['forum_id']), // For identifying the name of the forum in a notification email. (string)    // Indexing
+                'topic_title'	 => $title,
+                'notify_set'	 => true, // (bool)
+                'notify'		 => true, // (bool)
+                'post_time'		 => empty($source['curdate']) ? strtotime($rss_item['pubDate']) : 0, // Set a specific time, use 0 to let submit_post() take care of getting the proper time (int)
+                'forum_name'	 => $this->get_forum_name($source['forum_id']), // For identifying the name of the forum in a notification email. (string)    // Indexing
                 'enable_indexing'	 => true, // Allow indexing the post? (bool)    // 3.0.6
             );
         }
@@ -593,7 +622,7 @@ class driver
 	 */
 	private function prop_to_string($prop)
 	{
-        if (empty($prop))
+        if (is_null($prop))
         {
             return '';
         }
@@ -792,12 +821,22 @@ class driver
         $xml_errors = '';
         foreach( libxml_get_errors() as $error ) 
         {
-            $xml_errors .= $error->message . '\n';
+            $xml_errors .= $error->message . "\n";
         }
-        $this->log->add('critical', $this->user->data['user_id'], $this->user->ip, 'FPB_LOG_FEED_ERROR', time(), array($url, $xml_errors));
+        $this->log->add(self::LOG_CRITICAL, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_ERROR, time(), array($url, $xml_errors));
         
         // Clear libxml error buffer
         libxml_clear_errors();
         return;
     }
+
+	/**
+	 * Log that a feed has been fetched
+	 * @param string $url
+	 * @return void
+	 */
+	private function log_feed_fetched($url)
+	{
+		$this->log->add(self::LOG_ADMIN, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_FETCHED, time(), array($url));
+	}
 }

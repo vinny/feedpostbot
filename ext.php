@@ -11,6 +11,7 @@ class ext extends \phpbb\extension\base
 			$user = $this->container->get('user');
 			$user->add_lang_ext('ger/feedpostbot', 'info_acp_feedpostbot');
 			trigger_error($user->lang('FPB_REQUIRE_SIMPLEXML'), E_USER_WARNING);
+			return false;
 		}
 		return true;
     }

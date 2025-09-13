@@ -35,7 +35,7 @@ class feedpostbot_cron extends \phpbb\cron\task\base
 	public function __construct(\phpbb\config\config $config,  \ger\feedpostbot\classes\driver $feedpostbot)
 	{
 		$this->config = $config;
-        $this->cron_frequency = $config['feedpostbot_cron_frequency'];
+        $this->cron_frequency = isset($config['feedpostbot_cron_frequency']) ? $config['feedpostbot_cron_frequency'] : 1800;
 		$this->feedpostbot = $feedpostbot;
 	}
 
