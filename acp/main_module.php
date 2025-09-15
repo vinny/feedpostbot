@@ -104,25 +104,28 @@ class main_module
 			else
 			{
                 $new_state = [];
-				foreach ($current_state as $id => $source)
+				if (is_array($current_state))
 				{
-					$url = $request->variable($id.'_url', '', true);
-					if (!$this->validate_feed($current_state, $url, $id))
+					foreach ($current_state as $id => $source)
 					{
-						trigger_error('FPB_FEED_URL_INVALID');
+						$url = $request->variable($id.'_url', '', true);
+						if (!$this->validate_feed($current_state, $url, $id))
+						{
+							trigger_error('FPB_FEED_URL_INVALID');
+						}
+						$new_state[$id] = array(
+							'url' => $url,
+							'type' => $request->variable($id.'_type', $current_state[$id]['type']),
+							'prefix' => $request->variable($id.'_prefix', '', true),
+							'forum_id' => $request->variable($id.'_forum_id', ''),
+							'user_id' => $request->variable($id.'_user_id', $user->data['user_id']),
+							'textlimit' => $request->variable($id.'_textlimit', 0),
+							'timeout' => $request->variable($id.'_timeout', 3),
+							'curdate' => strlen($request->variable($id . '_curdate', '')) > 0 ? 1 : 0,
+							'append_link' => strlen($request->variable($id . '_append_link', '')) > 0 ? 1 : 0,
+							'latest' => $source['latest'],
+						);
 					}
-					$new_state[$id] = array(
-						'url' => $url,
-						'type' => $request->variable($id.'_type', $current_state[$id]['type']),
-						'prefix' => $request->variable($id.'_prefix', '', true),
-						'forum_id' => $request->variable($id.'_forum_id', ''),
-						'user_id' => $request->variable($id.'_user_id', $user->data['user_id']),
-						'textlimit' => $request->variable($id.'_textlimit', 0),
-						'timeout' => $request->variable($id.'_timeout', 3),
-						'curdate' => strlen($request->variable($id . '_curdate', '')) > 0 ? 1 : 0,
-						'append_link' => strlen($request->variable($id . '_append_link', '')) > 0 ? 1 : 0,
-						'latest' => $source['latest'],
-					);
 				}
 				$config_text->set('ger_feedpostbot_current_state', json_encode($new_state));
 			}

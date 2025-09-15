@@ -265,6 +265,12 @@ class driver
 		}
         $ns = $content->getNamespaces(true);
 
+		// If there are no entries, return empty array safely
+		if (empty($content->entry))
+		{
+			return array();
+		}
+
 		foreach($content->entry as $item)
 		{
 			$append = array(
@@ -313,6 +319,12 @@ class driver
 		}
         $ns = $content->getNamespaces(true);
         
+		// If there are no items, return empty array safely
+		if (empty($content->item))
+		{
+			return array();
+		}
+        
 		foreach($content->item as $item)
 		{            
 			$append = array(
@@ -355,6 +367,12 @@ class driver
 			return array(); // Return empty array instead of false
 		}
         $ns = $content->getNamespaces(true);
+
+		// If there are no item elements, return empty array safely
+		if (empty($content->channel->item))
+		{
+			return array();
+		}
 
 		foreach($content->channel->item as $item)
 		{
