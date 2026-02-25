@@ -144,6 +144,9 @@ class driver
 			if (!empty($source['forum_id']))
 			{
 				$counter += $this->fetch_items($this->parse_feed($source['url'], $source['type'], $source['timeout']), $id);
+                
+                // Switch back to original user after processing each feed to avoid context leaking
+                $this->switch_user($active_user);
 			}
 		}
 		$this->config_text->set('ger_feedpostbot_current_state', json_encode($this->current_state));
@@ -855,6 +858,7 @@ class driver
 	 */
 	private function log_feed_fetched($url)
 	{
-		$this->log->add(self::LOG_ADMIN, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_FETCHED, time(), array($url));
+		// Tone down logging: do not log every feed fetch
+		// $this->log->add(self::LOG_ADMIN, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_FETCHED, time(), array($url));
 	}
 }
