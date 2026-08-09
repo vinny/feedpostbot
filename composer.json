@@ -3,29 +3,33 @@
     "type": "phpbb-extension",
     "description": "Simple feed reader that posts new items in your forum. Supports RSS, RDF and ATOM feeds",
     "homepage": "https://github.com/vinny/feedpostbot",
-    "version": "1.0.14",
-    "time": "2025-07-28",
-    "license": "GPL-2.0",
+    "version": "1.0.15",
+    "license": "GPL-2.0-only",
     "authors": [
         {
             "name": "Ger",
             "homepage": "https://github.com/GerB",
             "role": "Original Author"
         },
-		{
-			"name": "_Vinny_",
-			"homepage": "https://github.com/vinny",
-			"role": "Contributor"
-		}
+        {
+            "name": "_Vinny_",
+            "homepage": "https://github.com/vinny",
+            "role": "Contributor"
+        }
     ],
     "require": {
-        "php": ">=7.1.3",
-        "ext-simplexml" : "*"
+        "php": ">=7.2",
+        "ext-simplexml": "*"
     },
     "extra": {
         "display-name": "Feed post bot",
         "soft-require": {
             "phpbb/phpbb": ">=3.3.0"
+        },
+        "version-check": {
+            "host": "www.phpbb.com",
+            "directory": "/customise/db/extension/feedpostbot",
+            "filename": "version_check"
         }
     }
 }
