@@ -1,7 +1,7 @@
 <?php
 /**
  *
- * Move cron frequency to config item instead of hardcoded
+ * Feed post bot. An extension for the phpBB Forum Software package.
  *
  * @copyright (c) 2017, Ger, https://github.com/GerB
  * @license GNU General Public License, version 2 (GPL-2.0)
@@ -29,5 +29,3 @@ class cron_frequency_config extends \phpbb\db\migration\migration
 		);
 	}
 }
-
-

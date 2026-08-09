@@ -1,10 +1,9 @@
 <?php
-
 /**
  *
- * Feed post bot main class
+ * Feed post bot. An extension for the phpBB Forum Software package.
  *
- * @copyright (c) 2017 Ger Bruinsma
+ * @copyright (c) 2017, Ger, https://github.com/GerB
  * @license GNU General Public License, version 2 (GPL-2.0)
  *
  */
@@ -35,6 +34,12 @@ class driver
 	protected $phpbb_dispatcher;
 	public $current_state;
 
+	/** @var array Cache for forum names */
+	protected $forum_name_cache = array();
+
+	/** @var array Cache for user data rows */
+	protected $user_data_cache = array();
+
 	/**
 	 * Constructor
 	 *
@@ -48,7 +53,7 @@ class driver
 	 * @param string										$php_ext
 	 * @param \phpbb\event\dispatcher						$phpbb_dispatcher
 	 */
-	public function __construct(\phpbb\config\config $config,  \phpbb\config\db_text $config_text, \phpbb\user $user, \phpbb\language\language $language, \phpbb\auth\auth $auth, \phpbb\db\driver\driver_interface $db, \phpbb\log\log $log, $phpbb_root_path, $php_ext, \phpbb\event\dispatcher $phpbb_dispatcher)
+	public function __construct(\phpbb\config\config $config, \phpbb\config\db_text $config_text, \phpbb\user $user, \phpbb\language\language $language, \phpbb\auth\auth $auth, \phpbb\db\driver\driver_interface $db, \phpbb\log\log $log, $phpbb_root_path, $php_ext, \phpbb\event\dispatcher $phpbb_dispatcher)
 	{
 		$this->config = $config;
 		$this->config_text = $config_text;
@@ -70,137 +75,158 @@ class driver
 		$ct = $this->config_text->get('ger_feedpostbot_current_state');
 		if (empty($ct) || $ct === 'null')
 		{
-			$this->current_state = false;
+			$this->current_state = array();
 		}
 		else
 		{
-            $decoded = json_decode($ct, true);
-            if ($decoded === null && json_last_error() !== JSON_ERROR_NONE)
-            {
-                // Invalid JSON, reset to false
-                $this->current_state = false;
-            }
-            else
-            {
-                $this->current_state = $decoded;
-                $this->check_state_parameters();
-            }
-        }
-        return $this->current_state;
+			$decoded = json_decode($ct, true);
+			if (!is_array($decoded))
+			{
+				$this->current_state = array();
+			}
+			else
+			{
+				$this->current_state = $decoded;
+				$this->check_state_parameters();
+			}
+		}
+		return $this->current_state;
 	}
 
-    /**
-     * Make sure we have all parameters set
-     */
-    private function check_state_parameters()
-    {
-        $new_state = [];
-        foreach($this->current_state as $id => $source)
-        {
-            if (isset($source['append_link']))
+	/**
+	 * Make sure we have all parameters set
+	 */
+	private function check_state_parameters()
+	{
+		if (!is_array($this->current_state))
+		{
+			$this->current_state = array();
+			return;
+		}
+
+		$new_state = [];
+		foreach ($this->current_state as $id => $source)
+		{
+			if (is_array($source) && isset($source['append_link']))
 			{
 				$new_state[$id] = $source;
 			}
-            else
-            {
+			else if (is_array($source))
+			{
 				$new = $source;
 				$new['append_link'] = 1;
 				$new_state[$id] = $new;
-            }
-        }
-        $this->current_state = $new_state;
-        $this->config_text->set('ger_feedpostbot_current_state', json_encode($new_state));
-    }
-    
+			}
+		}
+		$this->current_state = $new_state;
+		$this->config_text->set('ger_feedpostbot_current_state', json_encode($new_state));
+	}
+
 	/**
 	 * Fetch all feeds
 	 * This is called by the cron handler
-     * @return int
+	 * @return int
 	 */
 	public function fetch_all()
 	{
-        if (empty($this->current_state)) 
-        {
-            $this->init_current_state();
-        }
-        $lock = (int) $this->config['feedpostbot_locked'];
-        if ($lock > 0)
-        {
-            return 0;
-        }
-        $counter = 0;
-        $active_user = $this->user->data['user_id'];
+		if (empty($this->current_state))
+		{
+			$this->init_current_state();
+		}
+		$lock = (int) $this->config['feedpostbot_locked'];
+		if ($lock > 0)
+		{
+			return 0;
+		}
+		$counter = 0;
+		$active_user = $this->user->data['user_id'];
 		if (empty($this->current_state))
 		{
 			return 0;
 		}
-        if (!$this->config->set_atomic('feedpostbot_locked', 0, time(), false))
-        {
-            return 0;
-        }
-		foreach($this->current_state as $id => $source)
+		if (!$this->config->set_atomic('feedpostbot_locked', 0, time(), false))
+		{
+			return 0;
+		}
+		foreach ($this->current_state as $id => $source)
 		{
 			// Only proceed if not disabled in ACP
 			if (!empty($source['forum_id']))
 			{
 				$counter += $this->fetch_items($this->parse_feed($source['url'], $source['type'], $source['timeout']), $id);
-                
-                // Switch back to original user after processing each feed to avoid context leaking
-                $this->switch_user($active_user);
+
+				// Switch back to original user after processing each feed to avoid context leaking
+				$this->switch_user($active_user);
 			}
 		}
 		$this->config_text->set('ger_feedpostbot_current_state', json_encode($this->current_state));
-        $this->switch_user($active_user);
-        $this->config->set('feedpostbot_locked', 0, false);
-        return $counter;
+		$this->switch_user($active_user);
+		$this->config->set('feedpostbot_locked', 0, false);
+		return $counter;
 	}
 
-    
-    /**
-     * Get content through curl or fallback to file_get_contents
-     * @param string $url
-     * @param int $timeout
-     * @param bool $useragent_override
-     * @param bool $force_file_get_contents
-     * @return string with content data or false
-     */
-    private function get_content($url, $timeout = self::FEED_TIMEOUT_DEFAULT, $useragent_override = false, $force_file_get_contents = false)
-    {
-        $url= html_entity_decode($url);
-        if (!function_exists('curl_init') || $force_file_get_contents) 
-        {
-            $opts['http']['timeout'] = (int) $timeout;
-            $context = stream_context_create($opts);
-            $data = @file_get_contents($url, false, $context); // Suppress errors
-        }
-        else
-        {
-            $curl = curl_init($url);
 
-            curl_setopt($curl, CURLOPT_FAILONERROR, true);
-            curl_setopt($curl, CURLOPT_FOLLOWLOCATION, true);
-            curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($curl, CURLOPT_TIMEOUT, $timeout);
-            if ($useragent_override)
-            {
-                curl_setopt($curl, CURLOPT_USERAGENT, 'Googlebot/2.1 (+http://www.google.com/bot.html)' );
-            }
-            $data = curl_exec($curl);
-            curl_close($curl);  
-            if (empty($data)) 
-            {
-                // Try it posing as Google
-                if (!$useragent_override) 
-                {
-                    return $this->get_content($url, $timeout, true);
-                }
-                return $this->get_content($url, $timeout, false, true);
-            }
-        }
+	/**
+	 * Get content through curl or fallback to file_get_contents
+	 * @param string $url
+	 * @param int $timeout
+	 * @param bool $useragent_override
+	 * @param bool $force_file_get_contents
+	 * @return string with content data or false
+	 */
+	private function get_content($url, $timeout = self::FEED_TIMEOUT_DEFAULT, $useragent_override = false, $force_file_get_contents = false)
+	{
+		if (empty($url))
+		{
+			return false;
+		}
+		$url = html_entity_decode((string) $url);
+		$default_ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+		$google_ua = 'Googlebot/2.1 (+http://www.google.com/bot.html)';
+		$user_agent = $useragent_override ? $google_ua : $default_ua;
 
-        return $data;
-    }
-    
+		if (!function_exists('curl_init') || $force_file_get_contents)
+		{
+			$opts = array(
+				'http' => array(
+					'timeout'    => (int) $timeout,
+					'user_agent' => $user_agent,
+				),
+				'ssl' => array(
+					'verify_peer'      => false,
+					'verify_peer_name' => false,
+				),
+			);
+			$context = stream_context_create($opts);
+			$data = @file_get_contents($url, false, $context);
+		}
+		else
+		{
+			$curl = curl_init($url);
+
+			curl_setopt($curl, CURLOPT_FAILONERROR, true);
+			curl_setopt($curl, CURLOPT_FOLLOWLOCATION, true);
+			curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+			curl_setopt($curl, CURLOPT_TIMEOUT, (int) $timeout);
+			curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, (int) $timeout);
+			curl_setopt($curl, CURLOPT_USERAGENT, $user_agent);
+
+			$data = curl_exec($curl);
+			curl_close($curl);
+			if (empty($data))
+			{
+				// Try it posing as Google
+				if (!$useragent_override)
+				{
+					return $this->get_content($url, $timeout, true);
+				}
+				return $this->get_content($url, $timeout, false, true);
+			}
+		}
+
+		return $data;
+	}
+
 	/**
 	 * Parse a feed
 	 * @param string $url
@@ -210,11 +236,11 @@ class driver
 	 */
 	private function parse_feed($url, $type, $timeout = self::FEED_TIMEOUT_PARSE)
 	{
-        // Don't throw errors but log them instead
-        libxml_use_internal_errors(true);
+		// Don't throw errors but log them instead
+		libxml_use_internal_errors(true);
 
-        $data = $this->get_content($url, $timeout);
-        if (!$data)
+		$data = $this->get_content($url, $timeout);
+		if (!$data)
 		{
 			$this->log->add(self::LOG_CRITICAL, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_TIMEOUT, time(), array($url . ' (' . $timeout . ' s)'));
 			return array(); // Return empty array instead of false
@@ -226,15 +252,15 @@ class driver
 		}
 	}
 
-    /**
+	/**
 	 * Autodetect feed type
 	 */
-    public function detect_feed_type($url)
-    {
-        $data = $this->get_content($url);
+	public function detect_feed_type($url)
+	{
+		$data = $this->get_content($url);
 
-        if (!empty($data))
-        {
+		if (!empty($data))
+		{
 			// Determine feed type and proceed accordingly
 			if ((stripos($data, 'application/atom+xml')!== false) || preg_match('/xmlns=\"(.+?)Atom\"/i', $data))
 			{
@@ -248,9 +274,9 @@ class driver
 			{
 				return 'rss';
 			}
-        }
-        return false;
-    }
+		}
+		return false;
+	}
 
 	/**
 	 * Parse the atom source into relevant info
@@ -260,13 +286,13 @@ class driver
 	private function parse_atom($data, $url)
 	{
 		$return = array(); // Initialize return array
-		$content = simplexml_load_string($data, 'SimpleXMLElement', LIBXML_NOCDATA);
+		$content = simplexml_load_string($data, 'SimpleXMLElement', LIBXML_NOCDATA | LIBXML_NONET);
 		if ($content === false)
 		{
-            $this->log_xml_error($url);
+			$this->log_xml_error($url);
 			return array(); // Return empty array instead of false
 		}
-        $ns = $content->getNamespaces(true);
+		$ns = $content->getNamespaces(true);
 
 		// If there are no entries, return empty array safely
 		if (empty($content->entry))
@@ -274,7 +300,7 @@ class driver
 			return array();
 		}
 
-		foreach($content->entry as $item)
+		foreach ($content->entry as $item)
 		{
 			$append = array(
 				'guid' => $this->prop_to_string($item->id),
@@ -283,20 +309,20 @@ class driver
 				'description' =>  $this->get_item_description($item, $ns),
 				'pubDate' => empty($item->updated) ? 0 : $this->prop_to_string($item->updated),
 			);
-                    
-            /**
-            * Modify the fetched ATOM item before it's added to the return list
-            *
-            * @event ger.feedpostbot.parse_atom_append
-            * @var  object item  item as found in source
-            * @var  array  append Array of properties to be send to the post_message function
-            * @since 1.0.1
-            */
-            $vars = [];
-            extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_atom_append', $vars));
 
-            // Add it to the list
-            $return[] = $append;
+			/**
+			* Modify the fetched ATOM item before it's added to the return list
+			*
+			* @event ger.feedpostbot.parse_atom_append
+			* @var  object item  item as found in source
+			* @var  array  append Array of properties to be send to the post_message function
+			* @since 1.0.1
+			*/
+			$vars = [];
+			extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_atom_append', $vars));
+
+			// Add it to the list
+			$return[] = $append;
 		}
 
 		$this->log_feed_fetched($url);
@@ -313,23 +339,23 @@ class driver
 		$return = array(); // Initialize return array
 		// RDF default hasn't dates. Most use a DC or SY namespace but SimpleXML doesn't handle those
 		$find = array('dc:date>', 'sy:date>');
-        
-		$content = simplexml_load_string(str_replace($find, 'date>', $data), 'SimpleXMLElement', LIBXML_NOCDATA);
+
+		$content = simplexml_load_string(str_replace($find, 'date>', $data), 'SimpleXMLElement', LIBXML_NOCDATA | LIBXML_NONET);
 		if ($content === false)
 		{
-            $this->log_xml_error($url);
+			$this->log_xml_error($url);
 			return array(); // Return empty array instead of false
 		}
-        $ns = $content->getNamespaces(true);
-        
+		$ns = $content->getNamespaces(true);
+
 		// If there are no items, return empty array safely
 		if (empty($content->item))
 		{
 			return array();
 		}
-        
-		foreach($content->item as $item)
-		{            
+
+		foreach ($content->item as $item)
+		{
 			$append = array(
 				'title' => $this->prop_to_string($item->title),
 				'link' => $this->prop_to_string($item->link),
@@ -337,19 +363,19 @@ class driver
 				'pubDate' => empty($item->date) ? ( empty($content->channel->date) ? 0 : $this->prop_to_string($content->channel->date) ) : $this->prop_to_string($item->date), // Fallback galore
 			);
 
-            /**
-            * Modify the fetched RDF item before it's added to the return list
-            *
-            * @event ger.feedpostbot.parse_rdf_append
-            * @var  object item  item as found in source
-            * @var  array  append Array of properties to be send to the post_message function
-            * @since 1.0.1
-            */
-            $vars = [];
-            extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_rdf_append', $vars));
+			/**
+			* Modify the fetched RDF item before it's added to the return list
+			*
+			* @event ger.feedpostbot.parse_rdf_append
+			* @var  object item  item as found in source
+			* @var  array  append Array of properties to be send to the post_message function
+			* @since 1.0.1
+			*/
+			$vars = [];
+			extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_rdf_append', $vars));
 
-            // Add it to the list
-            $return[] = $append;            
+			// Add it to the list
+			$return[] = $append;
 		}
 		$this->log_feed_fetched($url);
 		return $return;
@@ -363,13 +389,13 @@ class driver
 	private function parse_rss($data, $url)
 	{
 		$return = array(); // Initialize return array
-		$content = simplexml_load_string($data, 'SimpleXMLElement', LIBXML_NOCDATA);
+		$content = simplexml_load_string($data, 'SimpleXMLElement', LIBXML_NOCDATA | LIBXML_NONET);
 		if ($content === false)
 		{
-            $this->log_xml_error($url);
+			$this->log_xml_error($url);
 			return array(); // Return empty array instead of false
 		}
-        $ns = $content->getNamespaces(true);
+		$ns = $content->getNamespaces(true);
 
 		// If there are no item elements, return empty array safely
 		if (empty($content->channel->item))
@@ -377,71 +403,71 @@ class driver
 			return array();
 		}
 
-		foreach($content->channel->item as $item)
+		foreach ($content->channel->item as $item)
 		{
-            $append = array(
+			$append = array(
 				'guid' => $this->prop_to_string($item->guid),
 				'title' => $this->prop_to_string($item->title),
 				'link' => $this->prop_to_string($item->link),
 				'description' =>  $this->get_item_description($item, $ns),
 				'pubDate' => $this->prop_to_string($item->pubDate),
 			);
-        
-            /**
-            * Modify the fetched RSS item before it's added to the return list
-            *
-            * @event ger.feedpostbot.parse_rss_append
-            * @var  object item  item as found in source
-            * @var  array  append Array of properties to be send to the post_message function
-            * @since 1.0.1
-            */
-            $vars = [];
-            extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_rss_append', $vars));
 
-            // Add it to the list
-            $return[] = $append;
+			/**
+			* Modify the fetched RSS item before it's added to the return list
+			*
+			* @event ger.feedpostbot.parse_rss_append
+			* @var  object item  item as found in source
+			* @var  array  append Array of properties to be send to the post_message function
+			* @since 1.0.1
+			*/
+			$vars = [];
+			extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_rss_append', $vars));
+
+			// Add it to the list
+			$return[] = $append;
 		}
 		$this->log_feed_fetched($url);
 		return $return;
-		
+
 	}
 
-    /**
-     * Get some description with fallbacks for fallbacks
-     * @param object $item
-     * @param object $ns
-     * @return string
-     */
-    private function get_item_description($item, $ns = null)
-    {
-        if ( (!empty($ns['content'])) && $item->children($ns['content'])->encoded) 
-        {   
-            return $this->prop_to_string($item->children($ns['content'])->encoded);
-        }
-        if (!empty($item->description))
-        {
-            return $this->prop_to_string($item->description);
-        }
-        if (!empty($item->content))
-        {
-            return $this->prop_to_string($item->content);
-        }
-        if (!empty($item->summary))
-        {
-            return $this->prop_to_string($item->summary);
-        }
-        if (!empty($item->title))
-        {
-            return $this->prop_to_string($item->title);
-        }
-        // Still here?
-        return '';
-    }
+	/**
+	 * Get some description with fallbacks for fallbacks
+	 * @param object $item
+	 * @param object $ns
+	 * @return string
+	 */
+	private function get_item_description($item, $ns = null)
+	{
+		if ( (!empty($ns['content'])) && $item->children($ns['content'])->encoded)
+		{
+			return $this->prop_to_string($item->children($ns['content'])->encoded);
+		}
+		if (!empty($item->description))
+		{
+			return $this->prop_to_string($item->description);
+		}
+		if (!empty($item->content))
+		{
+			return $this->prop_to_string($item->content);
+		}
+		if (!empty($item->summary))
+		{
+			return $this->prop_to_string($item->summary);
+		}
+		if (!empty($item->title))
+		{
+			return $this->prop_to_string($item->title);
+		}
+		// Still here?
+		return '';
+	}
 
 
-    /**
+	/**
 	 * Fetch the new content in feed
-	 * 
+	 *
 	 * @param array $items
 	 * @param int $source_id
 	 * @return int
@@ -461,10 +487,11 @@ class driver
 			'guid' => empty($items[0]['guid']) ? '' : $items[0]['guid'],
 		);
 
-        $to_post = array();
+		$to_post = array();
 		// Added proper check before foreach
-		if (!empty($items) && is_array($items)) {
-			foreach($items as $item)
+		if (!empty($items) && is_array($items))
+		{
+			foreach ($items as $item)
 			{
 				if ($this->is_handled($item, $this->current_state[$source_id]['latest']))
 				{
@@ -480,11 +507,11 @@ class driver
 		}
 		if (!empty($to_post))
 		{
-            $this->switch_user($this->current_state[$source_id]['user_id']);
-            
+			$this->switch_user($this->current_state[$source_id]['user_id']);
+
 			// Reverse array to make sure that the latest item is also the newest
 			$to_post = array_reverse($to_post);
-			foreach($to_post as $item)
+			foreach ($to_post as $item)
 			{
 				$this->post_message($item, $source_id);
 				$posted++;
@@ -520,7 +547,7 @@ class driver
 		{
 			return true;
 		}
-		else if (!empty($item['pubDate']) && (strtotime($item['pubDate']) < strtotime($current['pubDate']))) 
+		else if (!empty($item['pubDate']) && (strtotime($item['pubDate']) < strtotime($current['pubDate'])))
 		{
 			return true;
 		}
@@ -552,8 +579,8 @@ class driver
 				return false;
 			}
 		}
-        $source = $this->current_state[$source_id];
-        
+		$source = $this->current_state[$source_id];
+
 		// Make sure we have UTF-8 and handle HTML
 		$description = $rss_item['description'];
 		$title = $this->clean_title($rss_item['title']);
@@ -566,74 +593,85 @@ class driver
 		if (!empty($source['textlimit']))
 		{
 			$post_text = $this->html2bbcode($this->closetags($this->character_limiter($description, $source['textlimit'])));
-            if (!empty($source['append_link']))
-            {
-                $post_text .= "\n\n" . '[url=' . $rss_item['link'] . ']' . $this->user->lang(self::LANG_READ_MORE) . '[/url]';
-            }
+			if (!empty($source['append_link']))
+			{
+				$post_text .= "\n\n" . '[url=' . $rss_item['link'] . ']' . $this->user->lang(self::LANG_READ_MORE) . '[/url]';
+			}
 		}
 		else
 		{
 			$post_text = $this->html2bbcode($description);
-            if (!empty($source['append_link']))
-            {
-                $post_text .= "\n\n" . $this->user->lang(self::LANG_SOURCE) . ' [url]' .  $rss_item['link'] . '[/url]';
-            }
+			if (!empty($source['append_link']))
+			{
+				$post_text .= "\n\n" . $this->user->lang(self::LANG_SOURCE) . ' [url]' .  $rss_item['link'] . '[/url]';
+			}
 		}
 
-        if (is_numeric($source['forum_id']))
-        {
-            // Prep posting
-            $poll = $uid = $bitfield = $options = '';
-            $allow_bbcode = $allow_urls = $allow_smilies = true;
-            generate_text_for_storage($post_text, $uid, $bitfield, $options, $allow_bbcode, $allow_urls, $allow_smilies);
+		if (is_numeric($source['forum_id']))
+		{
+			// Prep posting
+			$poll = array();
+			$uid = $bitfield = $options = '';
+			$allow_bbcode = $allow_urls = $allow_smilies = true;
+			generate_text_for_storage($post_text, $uid, $bitfield, $options, $allow_bbcode, $allow_urls, $allow_smilies);
 
-            $data = array(
-                // General Posting Settings
-                'forum_id'		 => $source['forum_id'], // The forum ID in which the post will be placed. (int)
-                'topic_id'		 => 0, // Post a new topic or in an existing one? Set to 0 to create a new one, if not, specify your topic ID here instead.
-                'icon_id'		 => false, // The Icon ID in which the post will be displayed with on the viewforum, set to false for icon_id. (int)
-                // Defining Post Options
-                'enable_bbcode'	 => true, // Enable BBcode in this post. (bool)
-                'enable_smilies'	 => true, // Enabe smilies in this post. (bool)
-                'enable_urls'	 => true, // Enable self-parsing URL links in this post. (bool)
-                'enable_sig'	 => true, // Enable the signature of the poster to be displayed in the post. (bool)
-                // Message Body
-                'message'		 => $post_text, // Your text you wish to have submitted. It should pass through generate_text_for_storage() before this. (string)
-                'message_md5'	 => md5($post_text), // The md5 hash of your message
-                // Values from generate_text_for_storage()
-                'bbcode_bitfield'	 => $bitfield, // Value created from the generate_text_for_storage() function.
-                'bbcode_uid'	 => $uid, // Value created from the generate_text_for_storage() function.    
-                // Other Options
-                'post_edit_locked'	 => 0, // Disallow post editing? 1 = Yes, 0 = No
-                'topic_title'	 => $title,
-                'notify_set'	 => true, // (bool)
-                'notify'		 => true, // (bool)
-                'post_time'		 => empty($source['curdate']) ? strtotime($rss_item['pubDate']) : 0, // Set a specific time, use 0 to let submit_post() take care of getting the proper time (int)
-                'forum_name'	 => $this->get_forum_name($source['forum_id']), // For identifying the name of the forum in a notification email. (string)    // Indexing
-                'enable_indexing'	 => true, // Allow indexing the post? (bool)    // 3.0.6
-            );
-        }
-        // Maybe an extension handles the content other than by posting
-        $do_post = true;
-        
-        /**
-         * Modify the post data array before post is submitted
-         *
-         * @event ger.feedpostbot.submit_post_before
-         * @var  array  data  Data array send to the submit_post function
-         * @var  array  rss_item  Complete feed item as fetched by parse_{method}
-         * @var  array  source      source settings
-         * @var  string  title      topic title
-         * @var  bool   do_post     set to false if you don't want to post
-         * @since 1.0.1
-         */
-        $vars = array('data', 'rss_item', 'source', 'title', 'do_post');
-        extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.submit_post_before', compact($vars)));
-        if ($do_post)
-        {
-            return submit_post('post', $title, $this->user->data['username'], POST_NORMAL, $poll, $data);
-        }
-        return true;
+			$post_time = 0;
+			if (empty($source['curdate']) && !empty($rss_item['pubDate']))
+			{
+				$ts = strtotime($rss_item['pubDate']);
+				if ($ts !== false && $ts > 0)
+				{
+					$post_time = (int) $ts;
+				}
+			}
+
+			$data = array(
+				// General Posting Settings
+				'forum_id'		 => (int) $source['forum_id'], // The forum ID in which the post will be placed. (int)
+				'topic_id'		 => 0, // Post a new topic or in an existing one? Set to 0 to create a new one, if not, specify your topic ID here instead.
+				'icon_id'		 => false, // The Icon ID in which the post will be displayed with on the viewforum, set to false for icon_id. (int)
+				// Defining Post Options
+				'enable_bbcode'	 => true, // Enable BBcode in this post. (bool)
+				'enable_smilies'	 => true, // Enabe smilies in this post. (bool)
+				'enable_urls'	 => true, // Enable self-parsing URL links in this post. (bool)
+				'enable_sig'	 => true, // Enable the signature of the poster to be displayed in the post. (bool)
+				// Message Body
+				'message'		 => $post_text, // Your text you wish to have submitted. It should pass through generate_text_for_storage() before this. (string)
+				'message_md5'	 => md5($post_text), // The md5 hash of your message
+				// Values from generate_text_for_storage()
+				'bbcode_bitfield'	 => $bitfield, // Value created from the generate_text_for_storage() function.
+				'bbcode_uid'	 => $uid, // Value created from the generate_text_for_storage() function.
+				// Other Options
+				'post_edit_locked'	 => 0, // Disallow post editing? 1 = Yes, 0 = No
+				'topic_title'	 => $title,
+				'notify_set'	 => true, // (bool)
+				'notify'		 => true, // (bool)
+				'post_time'		 => $post_time, // Set a specific time, use 0 to let submit_post() take care of getting the proper time (int)
+				'forum_name'	 => $this->get_forum_name($source['forum_id']), // For identifying the name of the forum in a notification email. (string)    // Indexing
+				'enable_indexing'	 => true, // Allow indexing the post? (bool)    // 3.0.6
+			);
+		}
+		// Maybe an extension handles the content other than by posting
+		$do_post = true;
+
+		/**
+		 * Modify the post data array before post is submitted
+		 *
+		 * @event ger.feedpostbot.submit_post_before
+		 * @var  array  data  Data array send to the submit_post function
+		 * @var  array  rss_item  Complete feed item as fetched by parse_{method}
+		 * @var  array  source      source settings
+		 * @var  string  title      topic title
+		 * @var  bool   do_post     set to false if you don't want to post
+		 * @since 1.0.1
+		 */
+		$vars = array('data', 'rss_item', 'source', 'title', 'do_post');
+		extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.submit_post_before', compact($vars)));
+		if ($do_post)
+		{
+			return submit_post('post', $title, $this->user->data['username'], POST_NORMAL, $poll, $data);
+		}
+		return true;
 	}
 
 	/**
@@ -643,30 +681,39 @@ class driver
 	 */
 	private function prop_to_string($prop)
 	{
-        if (is_null($prop))
-        {
-            return '';
-        }
-		if (!is_string($prop))
+		if (is_null($prop))
 		{
-			// Most probaly a SimpleXMLElement
-			$prop_ary = (array) $prop;
-			$prop = $prop_ary[0] ?? '';
+			return '';
 		}
-		$prop = (string) $prop;
-		return html_entity_decode($prop);
+		if ($prop instanceof \SimpleXMLElement)
+		{
+			$prop = (string) $prop;
+		}
+		else if (is_array($prop))
+		{
+			$prop = isset($prop[0]) ? (string) $prop[0] : '';
+		}
+		else
+		{
+			$prop = (string) $prop;
+		}
+		return html_entity_decode($prop, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 	}
 
-    /**
-     * Ditch emojis from title
-     * @param string $string
-     * @return string
-     */
-    private function clean_title($string)
-    {
-         return trim(preg_replace('/[\x{10000}-\x{10FFFF}]/u', " ", $string));
-    }
-    
+	/**
+	 * Ditch emojis from title
+	 * @param string $string
+	 * @return string
+	 */
+	private function clean_title($string)
+	{
+		if (empty($string))
+		{
+			return '';
+		}
+		return trim(preg_replace('/[\x{10000}-\x{10FFFF}]/u', " ", (string) $string));
+	}
+
 	/**
 	 * Switch to the RSS source user
 	 * @param int $new_user_id
@@ -674,29 +721,42 @@ class driver
 	 */
 	private function switch_user($new_user_id)
 	{
-        if ($this->user->data['user_id'] == $new_user_id)
-        {
-            $this->language->add_lang('info_acp_feedpostbot', 'ger/feedpostbot');
-            return true;
-        }
-        $cur_lang = $this->user->data['user_lang'];
-		
-        $sql = 'SELECT *
-				FROM ' . USERS_TABLE . '
-				WHERE user_id = ' . (int) $new_user_id;
-		$result = $this->db->sql_query($sql);
-		$row = $this->db->sql_fetchrow($result);
-		$this->db->sql_freeresult($result);
-        $row['is_registered'] = true;
-        $this->user->data = array_merge($this->user->data, $row);
-        $this->user->timezone = $row['user_timezone'];
-        
-        if ($cur_lang != $row['user_lang'])
-        {
-            $this->language->set_user_language($row['user_lang'], true);
-        }
+		$new_user_id = (int) $new_user_id;
+		if ($this->user->data['user_id'] == $new_user_id)
+		{
+			$this->language->add_lang('info_acp_feedpostbot', 'ger/feedpostbot');
+			return true;
+		}
+		$cur_lang = $this->user->data['user_lang'];
+
+		if (!isset($this->user_data_cache[$new_user_id]))
+		{
+			$sql = 'SELECT *
+					FROM ' . USERS_TABLE . '
+					WHERE user_id = ' . (int) $new_user_id;
+			$result = $this->db->sql_query($sql);
+			$row = $this->db->sql_fetchrow($result);
+			$this->db->sql_freeresult($result);
+
+			if (!$row || !is_array($row))
+			{
+				// Target user not found (e.g. deleted account), skip user switch
+				return false;
+			}
+			$this->user_data_cache[$new_user_id] = $row;
+		}
+
+		$row = $this->user_data_cache[$new_user_id];
+		$row['is_registered'] = true;
+		$this->user->data = array_merge($this->user->data, $row);
+		$this->user->timezone = isset($row['user_timezone']) ? $row['user_timezone'] : $this->user->timezone;
+
+		if (isset($row['user_lang']) && $cur_lang != $row['user_lang'])
+		{
+			$this->language->set_user_language($row['user_lang'], true);
+		}
 		$this->auth->acl($this->user->data);
-        $this->language->add_lang('info_acp_feedpostbot', 'ger/feedpostbot');
+		$this->language->add_lang('info_acp_feedpostbot', 'ger/feedpostbot');
 		return true;
 	}
 
@@ -707,12 +767,22 @@ class driver
 	 */
 	public function get_forum_name($id)
 	{
+		$id = (int) $id;
+		if (isset($this->forum_name_cache[$id]))
+		{
+			return $this->forum_name_cache[$id];
+		}
+
 		$sql = 'SELECT forum_name
 				FROM ' . FORUMS_TABLE . '
 				WHERE forum_id = ' . (int) $id;
-		$result = $this->db->sql_query($sql);
+		$result = $this->db->sql_query($sql, 3600);
 		$row = $this->db->sql_fetchrow($result);
-		return empty($row['forum_name']) ? '' : $row['forum_name'];
+		$this->db->sql_freeresult($result);
+
+		$name = empty($row['forum_name']) ? '' : $row['forum_name'];
+		$this->forum_name_cache[$id] = $name;
+		return $name;
 	}
 
 	/**
@@ -724,15 +794,18 @@ class driver
 	 */
 	public function character_limiter($str, $n = 300, $end_char = '...')
 	{
+		if (is_null($str) || $str === '')
+		{
+			return '';
+		}
+
+		$str = (string) $str;
 		if (strlen($str) < $n)
 		{
 			return $str;
 		}
 
-		$str = preg_replace("/\s+/", ' ', str_replace(array(
-			"\r\n",
-			"\r",
-			"\n"), ' ', $str));
+		$str = preg_replace("/\s+/", ' ', str_replace(array("\r\n", "\r", "\n"), ' ', $str));
 
 		if (strlen($str) <= $n)
 		{
@@ -750,6 +823,7 @@ class driver
 				return (strlen($out) == strlen($str)) ? $out : $out . $end_char;
 			}
 		}
+		return trim($out) !== '' ? trim($out) . $end_char : $str;
 	}
 
 	/**
@@ -759,13 +833,19 @@ class driver
 	 */
 	public function closetags($html)
 	{
+		if (empty($html))
+		{
+			return '';
+		}
+		$html = (string) $html;
+
 		// put all opened tags into an array
 		preg_match_all("#<([a-z]+)( .*)?(?!/)>#iU", $html, $result);
-		$openedtags = $result[1];
+		$openedtags = isset($result[1]) ? $result[1] : array();
 
 		// put all closed tags into an array
 		preg_match_all("#</([a-z]+)>#iU", $html, $result);
-		$closedtags = $result[1];
+		$closedtags = isset($result[1]) ? $result[1] : array();
 		$len_opened = count($openedtags);
 
 		// all tags are closed
@@ -784,7 +864,11 @@ class driver
 			}
 			else
 			{
-				unset($closedtags[array_search($openedtags[$i], $closedtags)]);
+				$key = array_search($openedtags[$i], $closedtags);
+				if ($key !== false)
+				{
+					unset($closedtags[$key]);
+				}
 			}
 		}
 		return $html;
@@ -797,9 +881,15 @@ class driver
 	 * @return string
 	 */
 	public function html2bbcode($html_string)
-	{ 
+	{
+		if (empty($html_string))
+		{
+			return '';
+		}
+		$html_string = (string) $html_string;
+
 		$convert = array(
-            "/[\r\n]+/" => " ",
+			"/[\r\n]+/" => " ",
 			"/\<ul(.*?)\>(.*?)\<\/ul\>/is" => "[list]$2[/list]",
 			"/\<ol(.*?)\>(.*?)\<\/ol\>/is" => "[list]$2[/list]",
 			"/\<b(.*?)\>(.*?)\<\/b\>/is" => "[b]$2[/b]",
@@ -811,45 +901,50 @@ class driver
 			"/\<p(.*?)\>(.*?)\<\/p\>/is" => "\n$2\n",
 			"/[\s]*\<br(.*?)\>[\s]*/is" => "\n",
 			"/\<strong(.*?)\>(.*?)\<\/strong\>/is" => "[b]$2[/b]",
-            '/<a(.+?)href=["\']?([^"\'>]+)["\']?(.*?)>(.*?)\<\/a\>/is' => "[url=$2]$4[/url]",
+			'/<a(.+?)href=["\']?([^"\'>]+)["\']?(.*?)>(.*?)\<\/a\>/is' => "[url=$2]$4[/url]",
 			'/\<iframe (.*?)src=["\']?([^"\'>]+)["\']?(.*?)<\/iframe\>/is' => "\n$2\n",
 			'/\n{3,}/s' => "\n\n",
 		);
 
-        /**
-        * Modify the fetched RSS item before it's added to the return list
-        *
-        * @event ger.feedpostbot.html2bbcode_convert
-        * @var  array   $convert  regex array
-        * @var  string  $html_string input string
-        * @since 1.0.12
-        */
-        $vars = [];
-        extract($this->phpbb_dispatcher->trigger_event('ger.feedpostbot.html2bbcode_convert', $vars));
-        
+		/**
+		* Modify the fetched RSS item before it's added to the return list
+		*
+		* @event ger.feedpostbot.html2bbcode_convert
+		* @var  array   convert      regex array
+		* @var  string  html_string  input string
+		* @since 1.0.12
+		*/
+		$vars = array('convert', 'html_string');
+		$event_data = $this->phpbb_dispatcher->trigger_event('ger.feedpostbot.html2bbcode_convert', compact($vars));
+		if (is_array($event_data) || $event_data instanceof \ArrayAccess)
+		{
+			extract((array) $event_data);
+		}
+
 		// Replace main stuff and strip anything else
-		return strip_tags(preg_replace(array_keys($convert), array_values($convert), $html_string));
+		$result = preg_replace(array_keys($convert), array_values($convert), $html_string);
+		return strip_tags($result !== null ? $result : '');
 	}
-    
-    /**
-     * Log xml error messages and clear
-     * @param string $url
-     * @return void
-     */
-    private function log_xml_error($url)
-    {
-        // Create a simple list of found errors
-        $xml_errors = '';
-        foreach( libxml_get_errors() as $error ) 
-        {
-            $xml_errors .= $error->message . "\n";
-        }
-        $this->log->add(self::LOG_CRITICAL, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_ERROR, time(), array($url, $xml_errors));
-        
-        // Clear libxml error buffer
-        libxml_clear_errors();
-        return;
-    }
+
+	/**
+	 * Log xml error messages and clear
+	 * @param string $url
+	 * @return void
+	 */
+	private function log_xml_error($url)
+	{
+		// Create a simple list of found errors
+		$xml_errors = '';
+		foreach (libxml_get_errors() as $error)
+		{
+			$xml_errors .= $error->message . "\n";
+		}
+		$this->log->add(self::LOG_CRITICAL, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_ERROR, time(), array($url, $xml_errors));
+
+		// Clear libxml error buffer
+		libxml_clear_errors();
+		return;
+	}
 
 	/**
 	 * Log that a feed has been fetched
@@ -858,7 +953,9 @@ class driver
 	 */
 	private function log_feed_fetched($url)
 	{
-		// Tone down logging: do not log every feed fetch
-		// $this->log->add(self::LOG_ADMIN, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_FETCHED, time(), array($url));
+		if (!empty($this->config['feedpostbot_enable_logs']))
+		{
+			$this->log->add(self::LOG_ADMIN, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_FETCHED, time(), array($url));
+		}
 	}
 }

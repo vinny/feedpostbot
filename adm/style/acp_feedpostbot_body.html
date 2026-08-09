@@ -1,112 +1,192 @@
-<!-- INCLUDE overall_header.html -->
+{% INCLUDE 'overall_header.html' %}
 
 <a id="maincontent"></a>
 
-<h1>{L_SETTINGS}</h1>
-<!-- IF S_ERROR -->
-    <div class="errorbox">
-            <h3>{L_WARNING}</h3>
-            <p>{ERROR_MSG}</p>
-    </div>
-<!-- ENDIF -->
-<form id="config" method="post" action="{U_ACTION}">
-    <fieldset>
-        {L_FPB_CRON_FREQUENCY}{L_COLON} <input type="number" name="cron_frequency" value="{CRON_FREQUENCY}" /> <input class="button1" type="submit" name="set_config" value="{L_SUBMIT}" />
-        {S_FORM_TOKEN}
-    </fieldset>
-</form>
-<!-- IF FPB_LOCKED -->
-<form id="reset_lock" method="post" action="{U_ACTION}">
-    <fieldset>
-        {L_FPB_LOCKED_EXPLAIN}{L_COLON} <input class="button1" type="submit" name="reset_lock" value="{L_SUBMIT}" />
-        {S_FORM_TOKEN}
-    </fieldset>
-</form>
-<!-- ELSE -->
-<form id="run_all" method="post" action="{U_ACTION}">
-    <fieldset>
-        {L_FPB_FETCH_ALL_FEEDS}{L_COLON} <input class="button1" type="submit" name="run_all" value="{L_SUBMIT}" />
-        {S_FORM_TOKEN}
-    </fieldset>
-</form>
-<!-- ENDIF -->
-<h2>{L_FPB_FEEDS}</h2>
-<form id="add_source" method="post" action="{U_ADD_ACTION}">
+<h1>{{ lang('FPB_ACP_FEEDPOSTBOT_TITLE') }}</h1>
+
+<p>{{ lang('FPB_ACP_SETTINGS_EXPLAIN') }}</p>
+
+{% if S_ERROR %}
+	<div class="errorbox">
+		<h3>{{ lang('WARNING') }}</h3>
+		<p>{{ ERROR_MSG }}</p>
+	</div>
+{% endif %}
+
+<form id="config" method="post" action="{{ U_ACTION }}">
 	<fieldset>
-		{L_FPB_ADD_FEED}{L_COLON} <input type="text" name="add_feed" value="" /> <input class="button1" type="submit" name="submit" value="{L_SUBMIT}" />
+		<legend>{{ lang('SETTINGS') }}</legend>
+		<dl>
+			<dt><label for="cron_frequency">{{ lang('FPB_CRON_FREQUENCY') }}{{ lang('COLON') }}</label><br /><span>{{ lang('FPB_CRON_FREQUENCY_EXPLAIN')|raw }}</span></dt>
+			<dd>
+				<input type="number" id="cron_frequency" name="cron_frequency" value="{{ CRON_FREQUENCY }}" class="inputbox autowidth" min="0" />
+			</dd>
+		</dl>
+		<dl>
+			<dt><label for="enable_logs">{{ lang('FPB_ENABLE_LOGS') }}{{ lang('COLON') }}</label><br /><span>{{ lang('FPB_ENABLE_LOGS_EXPLAIN') }}</span></dt>
+			<dd>
+				<label><input type="radio" class="radio" id="enable_logs" name="enable_logs" value="1"{% if ENABLE_LOGS %} checked="checked"{% endif %} /> {{ lang('YES') }}</label>
+				<label><input type="radio" class="radio" name="enable_logs" value="0"{% if not ENABLE_LOGS %} checked="checked"{% endif %} /> {{ lang('NO') }}</label>
+			</dd>
+		</dl>
+		<p class="submit-buttons">
+			<input class="button1" type="submit" name="set_config" value="{{ lang('SUBMIT') }}" />
+		</p>
+		{{ S_FORM_TOKEN }}
+	</fieldset>
+</form>
+
+{% if FPB_LOCKED %}
+	<form id="reset_lock" method="post" action="{{ U_ACTION }}">
+		<fieldset>
+			<legend>{{ lang('FPB_FEEDS') }}</legend>
+			<dl>
+				<dt><label>{{ lang('FPB_LOCKED_EXPLAIN') }}{{ lang('COLON') }}</label></dt>
+				<dd><input class="button1" type="submit" name="reset_lock" value="{{ lang('SUBMIT') }}" /></dd>
+			</dl>
+			{{ S_FORM_TOKEN }}
+		</fieldset>
+	</form>
+{% else %}
+	<form id="run_all" method="post" action="{{ U_ACTION }}">
+		<fieldset>
+			<legend>{{ lang('FPB_FEEDS') }}</legend>
+			<dl>
+				<dt><label>{{ lang('FPB_FETCH_ALL_FEEDS') }}{{ lang('COLON') }}</label></dt>
+				<dd><input class="button1" type="submit" name="run_all" value="{{ lang('SUBMIT') }}" /></dd>
+			</dl>
+			{{ S_FORM_TOKEN }}
+		</fieldset>
+	</form>
+{% endif %}
+
+<form id="add_source" method="post" action="{{ U_ADD_ACTION }}">
+	<fieldset>
+		<legend>{{ lang('FPB_ADD_FEED') }}</legend>
+		<dl>
+			<dt><label for="add_feed">{{ lang('FPB_FEED_URL') }}{{ lang('COLON') }}</label></dt>
+			<dd>
+				<input type="url" id="add_feed" name="add_feed" value="" class="inputbox autowidth" size="50" placeholder="https://www.phpbb.com/feeds/rss/" required />
+				<input class="button1" type="submit" name="submit" value="{{ lang('SUBMIT') }}" />
+			</dd>
+		</dl>
 		<input type="hidden" name="add" value="1" />
-		{S_FORM_TOKEN}
+		{{ S_FORM_TOKEN }}
 	</fieldset>
 </form>
-<p>{L_FPB_ACP_SETTINGS_EXPLAIN}</p>
-<dl>
-	<dt><label>{L_FPB_FEED_URL}{L_COLON}</label></dt><dd>{L_FPB_FEED_URL_EXPLAIN}</dd>
-	<dt><label>{L_FPB_FEED_TYPE}{L_COLON}</label></dt><dd>{L_FPB_FEED_TYPE_EXPLAIN}</dd>
-	<dt><label>{L_FPB_PREFIX}{L_COLON}</label></dt><dd>{L_FPB_PREFIX_EXPLAIN}</dd>
-	<dt><label>{L_FPB_ACP_FORUM_ID}{L_COLON}</label></dt><dd>{L_FPB_ACP_FORUM_ID_EXPLAIN}</dd>
-	<dt><label>{L_FPB_USER_ID}{L_COLON}</label></dt><dd>{L_FPB_USER_ID_EXPLAIN}</dd>
-	<dt><label>{L_FPB_TEXTLIMIT}{L_COLON}</label></dt><dd>{L_FPB_TEXTLIMIT_EXPLAIN}</dd>
-	<dt><label>{L_FPB_TIMEOUT}{L_COLON}</label></dt><dd>{L_FPB_TIMEOUT_EXPLAIN}</dd>
-	<dt><label>{L_FPB_CURDATE}{L_COLON}</label></dt><dd>{L_FPB_CURDATE_EXPLAIN}</dd>
-	<dt><label>{L_FPB_APPEND_LINK}{L_COLON}</label></dt><dd>{L_FPB_APPEND_LINK_EXPLAIN}</dd>
-</dl>
-<br>
-<form id="manage_feeds" method="post" action="{U_MANAGE_ACTION}">
-					                                        
-	<table>
-		<col class="col1" /><col class="col2" /><col class="col2" /><col class="col2" /><col class="col2" /><col class="col2" /><col class="col2" /><col class="col2" /><col class="col2" /><col class="col2" />
-	<thead>
-	<tr>
-		<th>#</th>
-		<th style="width: 25%">{L_FPB_FEED_URL}</th>
-		<th>{L_FPB_FEED_TYPE}</th>                
-		<th>{L_FPB_PREFIX}</th>
-		<th>{L_FPB_ACP_FORUM_ID}</th>
-		<th>{L_FPB_USER_ID}</th>
-		<th>{L_FPB_TEXTLIMIT}</th>
-		<th>{L_FPB_TIMEOUT}</th>
-		<th>{L_FPB_CURDATE}</th>
-		<th>{L_FPB_APPEND_LINK}</th>
-		<th>{L_ACTION}</th>
-	</tr>
-	</thead>
-	<tbody>
-	<!-- IF .feeds -->
-		<!-- BEGIN feeds -->
-		<tr>
-			<td>{feeds.ID}</td>
-			<td><input type="text" name="{feeds.ID}_url" value="{feeds.URL}" style="width: 98%" /></td>
-			<td style="text-align: center;">
-                            <select name="{feeds.ID}_type">
-                                <option value="rss"<!-- IF feeds.TYPE eq "rss" --> selected="selected"<!-- ENDIF -->>{L_FPB_TYPE_RSS}</option>
-				<option value="atom"<!-- IF feeds.TYPE eq "atom" --> selected="selected"<!-- ENDIF -->>{L_FPB_TYPE_ATOM}</option>
-				<option value="rdf"<!-- IF feeds.TYPE eq "rdf" --> selected="selected"<!-- ENDIF -->>{L_FPB_TYPE_RDF}</option>
-                            </select>
-                        </td>
-			<td><input type="text" name="{feeds.ID}_prefix" value="{feeds.PREFIX}" style="width: 98%" /></td>
-			<td style="text-align: center;"><select name="{feeds.ID}_forum_id"><option value="0">{L_DISABLED}</option>{feeds.S_FORUMS}</select></td>
-			<td style="text-align: center;"><input type="number" min="0" name="{feeds.ID}_user_id" value="{feeds.USER_ID}" /></td>
-			<td style="text-align: center;"><input type="number" min="0" name="{feeds.ID}_textlimit" value="{feeds.TEXTLIMIT}" /></td>
-			<td style="text-align: center;"><input type="number" min="0" name="{feeds.ID}_timeout" value="{feeds.TIMEOUT}" /></td>
-			<td style="text-align: center;"><label><input type="checkbox" class="radio" name="{feeds.ID}_curdate"<!-- IF feeds.S_CURDATE --> checked="checked"<!-- ENDIF --> /> {L_FPB_CURDATE}</label></td>
-			<td style="text-align: center;"><label><input type="checkbox" class="radio" name="{feeds.ID}_append_link"<!-- IF feeds.S_APPEND_LINK --> checked="checked"<!-- ENDIF --> /> {L_FPB_APPEND_LINK}</label></td>
-			<td style="text-align: center;"><a href="{feeds.U_DELETE}" data-ajax="row_delete">{ICON_DELETE}</a></td>
-		</tr>
-		<!-- END feeds -->
-	<!-- ELSE -->
-		<tr>
-			<td colspan="11" class="row3">{L_FPB_NO_FEEDS}</td>
-		</tr>
-	<!-- ENDIF -->
-	</tbody>
+
+<form id="manage_feeds" method="post" action="{{ U_ACTION }}">
+	<fieldset>
+		<legend>{{ lang('FPB_CONFIGURED_FEEDS') }}</legend>
+
+		<table class="table1">
+			<thead>
+				<tr>
+					<th>#</th>
+					<th>{{ lang('FPB_FEED_URL') }}</th>
+					<th>{{ lang('FPB_FEED_TYPE') }}</th>
+					<th>{{ lang('FPB_PREFIX') }}</th>
+					<th>{{ lang('FPB_ACP_FORUM_ID') }}</th>
+					<th>{{ lang('FPB_USER_ID') }}</th>
+					<th>{{ lang('FPB_TEXTLIMIT') }}</th>
+					<th>{{ lang('FPB_TIMEOUT') }}</th>
+					<th>{{ lang('FPB_CURDATE') }}</th>
+					<th>{{ lang('FPB_APPEND_LINK') }}</th>
+					<th>{{ lang('ACTION') }}</th>
+				</tr>
+			</thead>
+			<tbody>
+			{% for feed in loops.feeds %}
+				<tr class="{% if loop.index is odd %}row1{% else %}row2{% endif %}">
+					<td class="text-center"><strong>{{ loop.index }}</strong></td>
+					<td><input type="text" name="{{ feed.ID }}_url" value="{{ feed.URL }}" class="inputbox" style="width: 95%;" /></td>
+					<td class="text-center">
+						<select name="{{ feed.ID }}_type">
+							<option value="rss"{% if feed.TYPE == 'rss' %} selected="selected"{% endif %}>{{ lang('FPB_TYPE_RSS') }}</option>
+							<option value="atom"{% if feed.TYPE == 'atom' %} selected="selected"{% endif %}>{{ lang('FPB_TYPE_ATOM') }}</option>
+							<option value="rdf"{% if feed.TYPE == 'rdf' %} selected="selected"{% endif %}>{{ lang('FPB_TYPE_RDF') }}</option>
+						</select>
+					</td>
+					<td><input type="text" name="{{ feed.ID }}_prefix" value="{{ feed.PREFIX }}" class="inputbox" style="width: 95%;" /></td>
+					<td class="text-center">
+						<select name="{{ feed.ID }}_forum_id">
+							<option value="0">{{ lang('DISABLED') }}</option>
+							{{ feed.S_FORUMS|raw }}
+						</select>
+					</td>
+					<td class="text-center"><input type="number" min="0" name="{{ feed.ID }}_user_id" value="{{ feed.USER_ID }}" class="inputbox autowidth" size="4" /></td>
+					<td class="text-center"><input type="number" min="0" name="{{ feed.ID }}_textlimit" value="{{ feed.TEXTLIMIT }}" class="inputbox autowidth" size="5" /></td>
+					<td class="text-center"><input type="number" min="0" name="{{ feed.ID }}_timeout" value="{{ feed.TIMEOUT }}" class="inputbox autowidth" size="4" /></td>
+					<td class="text-center"><input type="checkbox" class="radio" name="{{ feed.ID }}_curdate"{% if feed.S_CURDATE %} checked="checked"{% endif %} title="{{ lang('FPB_CURDATE_EXPLAIN') }}" /></td>
+					<td class="text-center"><input type="checkbox" class="radio" name="{{ feed.ID }}_append_link"{% if feed.S_APPEND_LINK %} checked="checked"{% endif %} title="{{ lang('FPB_APPEND_LINK_EXPLAIN') }}" /></td>
+					<td class="text-center"><a href="{{ feed.U_DELETE }}" data-ajax="row_delete">{{ ICON_DELETE|raw }}</a></td>
+				</tr>
+			{% else %}
+				<tr>
+					<td colspan="11" class="row3 text-center">{{ lang('FPB_NO_FEEDS') }}</td>
+				</tr>
+			{% endfor %}
+			</tbody>
+		</table>
+
+		{% if loops.feeds|length %}
+			<p class="submit-buttons">
+				<input class="button1" type="submit" name="submit" value="{{ lang('SUBMIT') }}" />
+			</p>
+		{% endif %}
+
+		{{ S_FORM_TOKEN }}
+	</fieldset>
+</form>
+
+<fieldset>
+	<legend>{{ lang('HELP') }}</legend>
+	<table class="table1 font-size-11">
+		<thead>
+			<tr>
+				<th style="width: 25%;">{{ lang('OPTION') }}</th>
+				<th>{{ lang('DESCRIPTION') }}</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr class="row1">
+				<td><strong>{{ lang('FPB_FEED_URL') }}</strong></td>
+				<td>{{ lang('FPB_FEED_URL_EXPLAIN')|raw }}</td>
+			</tr>
+			<tr class="row2">
+				<td><strong>{{ lang('FPB_FEED_TYPE') }}</strong></td>
+				<td>{{ lang('FPB_FEED_TYPE_EXPLAIN') }}</td>
+			</tr>
+			<tr class="row1">
+				<td><strong>{{ lang('FPB_PREFIX') }}</strong></td>
+				<td>{{ lang('FPB_PREFIX_EXPLAIN') }}</td>
+			</tr>
+			<tr class="row2">
+				<td><strong>{{ lang('FPB_ACP_FORUM_ID') }}</strong></td>
+				<td>{{ lang('FPB_ACP_FORUM_ID_EXPLAIN') }}</td>
+			</tr>
+			<tr class="row1">
+				<td><strong>{{ lang('FPB_USER_ID') }}</strong></td>
+				<td>{{ lang('FPB_USER_ID_EXPLAIN') }}</td>
+			</tr>
+			<tr class="row2">
+				<td><strong>{{ lang('FPB_TEXTLIMIT') }}</strong></td>
+				<td>{{ lang('FPB_TEXTLIMIT_EXPLAIN')|raw }}</td>
+			</tr>
+			<tr class="row1">
+				<td><strong>{{ lang('FPB_TIMEOUT') }}</strong></td>
+				<td>{{ lang('FPB_TIMEOUT_EXPLAIN') }}</td>
+			</tr>
+			<tr class="row2">
+				<td><strong>{{ lang('FPB_CURDATE') }}</strong></td>
+				<td>{{ lang('FPB_CURDATE_EXPLAIN') }}</td>
+			</tr>
+			<tr class="row1">
+				<td><strong>{{ lang('FPB_APPEND_LINK') }}</strong></td>
+				<td>{{ lang('FPB_APPEND_LINK_EXPLAIN') }}</td>
+			</tr>
+		</tbody>
 	</table>
-	<!-- IF .feeds -->
-        <fieldset class="quick" style="text-align: inherit">
-		<input class="button1" type="submit" name="submit" value="{L_SUBMIT}" />
-	</fieldset>
-	<!-- ENDIF -->
+</fieldset>
 
-	{S_FORM_TOKEN}
-
-</form>
-<!-- INCLUDE overall_footer.html -->
+{% INCLUDE 'overall_footer.html' %}

@@ -1,7 +1,7 @@
 <?php
 /**
  *
- * Simple feed reader. An extension for the phpBB Forum Software package.
+ * Feed post bot. An extension for the phpBB Forum Software package.
  *
  * @copyright (c) 2017, Ger, https://github.com/GerB
  * @license GNU General Public License, version 2 (GPL-2.0)
@@ -23,7 +23,7 @@ class feedpostbot_cron extends \phpbb\cron\task\base
 
 	/** @var \phpbb\config\config */
 	protected $config;
-	
+
 	/** @var \ger\feedpostbot\classes\driver */
 	protected $feedpostbot;
 
@@ -31,11 +31,12 @@ class feedpostbot_cron extends \phpbb\cron\task\base
 	 * Constructor
 	 *
 	 * @param \phpbb\config\config $config Config object
+	 * @param \ger\feedpostbot\classes\driver $feedpostbot Driver object
 	 */
-	public function __construct(\phpbb\config\config $config,  \ger\feedpostbot\classes\driver $feedpostbot)
+	public function __construct(\phpbb\config\config $config, \ger\feedpostbot\classes\driver $feedpostbot)
 	{
 		$this->config = $config;
-        $this->cron_frequency = isset($config['feedpostbot_cron_frequency']) ? $config['feedpostbot_cron_frequency'] : 1800;
+		$this->cron_frequency = isset($config['feedpostbot_cron_frequency']) ? $config['feedpostbot_cron_frequency'] : 1800;
 		$this->feedpostbot = $feedpostbot;
 	}
 
@@ -75,10 +76,11 @@ class feedpostbot_cron extends \phpbb\cron\task\base
 	 */
 	public function should_run()
 	{
-        if ($this->cron_frequency > 0) 
-        {
-            return $this->config['feedpostbot_cron_last_run'] < (time() - $this->cron_frequency);
-        }
-        return false;
+		if ($this->cron_frequency > 0)
+		{
+			$last_run = isset($this->config['feedpostbot_cron_last_run']) ? (int) $this->config['feedpostbot_cron_last_run'] : 0;
+			return $last_run < (time() - $this->cron_frequency);
+		}
+		return false;
 	}
 }

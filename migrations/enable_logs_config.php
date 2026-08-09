@@ -10,22 +10,22 @@
 
 namespace ger\feedpostbot\migrations;
 
-class config_lock extends \phpbb\db\migration\migration
+class enable_logs_config extends \phpbb\db\migration\migration
 {
 	public function effectively_installed()
 	{
-		return isset($this->config['feedpostbot_locked']);
+		return isset($this->config['feedpostbot_enable_logs']);
 	}
 
 	static public function depends_on()
 	{
-		return array('\ger\feedpostbot\migrations\install_feedpostbot');
+		return array('\ger\feedpostbot\migrations\cron_frequency_config');
 	}
 
 	public function update_data()
 	{
 		return array(
-			array('config.add', array('feedpostbot_locked', 0, true)),
+			array('config.add', array('feedpostbot_enable_logs', 0)),
 		);
 	}
 }
