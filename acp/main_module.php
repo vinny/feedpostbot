@@ -35,6 +35,10 @@ class main_module
 		$current_state = $feedpostbot->current_state;
 		if ($request->is_set_post('run_all'))
 		{
+			if (!check_form_key('ger/feedpostbot'))
+			{
+				trigger_error('FORM_INVALID');
+			}
 			$fetched = $feedpostbot->fetch_all();
 			if ($fetched > 0)
 			{
