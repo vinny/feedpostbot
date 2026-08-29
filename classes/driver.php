@@ -104,7 +104,8 @@ class driver
 			return;
 		}
 
-		$new_state = [];
+		$modified = false;
+		$new_state = array();
 		foreach ($this->current_state as $id => $source)
 		{
 			if (is_array($source) && isset($source['append_link']))
@@ -116,10 +117,14 @@ class driver
 				$new = $source;
 				$new['append_link'] = 1;
 				$new_state[$id] = $new;
+				$modified = true;
 			}
 		}
 		$this->current_state = $new_state;
-		$this->config_text->set('ger_feedpostbot_current_state', json_encode($new_state));
+		if ($modified)
+		{
+			$this->config_text->set('ger_feedpostbot_current_state', json_encode($new_state));
+		}
 	}
 
 	/**
@@ -174,13 +179,19 @@ class driver
 	 * @param bool $force_file_get_contents
 	 * @return string with content data or false
 	 */
-	private function get_content($url, $timeout = self::FEED_TIMEOUT_DEFAULT, $useragent_override = false, $force_file_get_contents = false)
+	protected function get_content($url, $timeout = self::FEED_TIMEOUT_DEFAULT, $useragent_override = false, $force_file_get_contents = false)
 	{
 		if (empty($url))
 		{
 			return false;
 		}
 		$url = html_entity_decode((string) $url);
+		$parts = parse_url($url);
+		if (empty($parts['scheme']) || !in_array(strtolower($parts['scheme']), array('http', 'https'), true))
+		{
+			return false;
+		}
+
 		$default_ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 		$google_ua = 'Googlebot/2.1 (+http://www.google.com/bot.html)';
 		$user_agent = $useragent_override ? $google_ua : $default_ua;
@@ -191,10 +202,6 @@ class driver
 				'http' => array(
 					'timeout'    => (int) $timeout,
 					'user_agent' => $user_agent,
-				),
-				'ssl' => array(
-					'verify_peer'      => false,
-					'verify_peer_name' => false,
 				),
 			);
 			$context = stream_context_create($opts);
@@ -236,6 +243,12 @@ class driver
 	 */
 	private function parse_feed($url, $type, $timeout = self::FEED_TIMEOUT_PARSE)
 	{
+		$type = strtolower((string) $type);
+		if (!in_array($type, array('rss', 'atom', 'rdf'), true))
+		{
+			return array();
+		}
+
 		// Don't throw errors but log them instead
 		libxml_use_internal_errors(true);
 
@@ -247,7 +260,7 @@ class driver
 		}
 		else
 		{
-			$method = 'parse_'.$type;
+			$method = 'parse_' . $type;
 			return $this->$method($data, $url);
 		}
 	}
@@ -598,7 +611,7 @@ class driver
 		$title = $this->clean_title($rss_item['title']);
 		if (!empty($source['prefix']))
 		{
-			$title = trim($source['prefix']) . ' ' . $title;
+			$title = $this->clean_title($source['prefix']) . ' ' . $title;
 		}
 
 		// Only show excerpt of feed if a text limit is given, but make it nice
@@ -743,7 +756,7 @@ class driver
 		$string = preg_replace('/\s+/', ' ', $string);
 
 		// Ensure HTML special characters are safely escaped for topic title storage
-		return trim(htmlspecialchars($string, ENT_COMPAT, 'UTF-8'));
+		return trim(utf8_htmlspecialchars($string));
 	}
 
 	/**
@@ -754,12 +767,12 @@ class driver
 	private function switch_user($new_user_id)
 	{
 		$new_user_id = (int) $new_user_id;
-		if ($this->user->data['user_id'] == $new_user_id)
+		if (isset($this->user->data['user_id']) && $this->user->data['user_id'] == $new_user_id)
 		{
 			$this->language->add_lang('info_acp_feedpostbot', 'ger/feedpostbot');
 			return true;
 		}
-		$cur_lang = $this->user->data['user_lang'];
+		$cur_lang = isset($this->user->data['user_lang']) ? $this->user->data['user_lang'] : (isset($this->config['default_lang']) ? $this->config['default_lang'] : 'en');
 
 		if (!isset($this->user_data_cache[$new_user_id]))
 		{

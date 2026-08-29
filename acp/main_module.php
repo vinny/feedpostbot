@@ -86,7 +86,7 @@ class main_module
 					trigger_error($user->lang('FPB_FEED_URL_INVALID') . adm_back_link($this->u_action), E_USER_WARNING);
 				}
 				$type = $feedpostbot->detect_feed_type($url);
-				if ($type === false)
+				if ($type === false || !in_array($type, array('rss', 'atom', 'rdf'), true))
 				{
 					trigger_error($user->lang('FPB_FEED_URL_INVALID') . adm_back_link($this->u_action), E_USER_WARNING);
 				}
@@ -120,9 +120,14 @@ class main_module
 						{
 							trigger_error('FPB_FEED_URL_INVALID');
 						}
+						$type = strtolower($request->variable($id . '_type', $current_state[$id]['type']));
+						if (!in_array($type, array('rss', 'atom', 'rdf'), true))
+						{
+							$type = $current_state[$id]['type'];
+						}
 						$new_state[$id] = array(
 							'url' => $url,
-							'type' => $request->variable($id . '_type', $current_state[$id]['type']),
+							'type' => $type,
 							'prefix' => $request->variable($id . '_prefix', '', true),
 							'forum_id' => $request->variable($id . '_forum_id', ''),
 							'user_id' => $request->variable($id . '_user_id', $user->data['user_id']),
@@ -180,16 +185,16 @@ class main_module
 				);
 
 				/**
-				 * Modify the post data array before post is submitted
+				 * Modify ACP feed block variables before they are assigned to the template
 				 *
 				 * @event ger.feedpostbot.acp_override_feed_block_vars
-				 * @var  array  block_vars  default available block_vars
-				 * @var  array  source      source settings from DB
-				 * @var  bool   id          source id
-				 * @since 1.0.14
+				 * @var  int    id          Feed ID
+				 * @var  array  source      Feed source data array
+				 * @var  array  block_vars  Template block variables
+				 * @since 1.0.1
 				 */
-				$vars = array('block_vars', 'source', 'id');
-				$event_data = $phpbb_dispatcher->trigger_event('ger.feedpostbot.acp_override_feed_block_vars', compact($vars));
+				$vars = array('id', 'source', 'block_vars');
+				$event_data = $this->phpbb_dispatcher->trigger_event('ger.feedpostbot.acp_override_feed_block_vars', compact($vars));
 				if (is_array($event_data) || $event_data instanceof \ArrayAccess)
 				{
 					extract((array) $event_data);
@@ -209,10 +214,12 @@ class main_module
 	}
 
 	/**
-	 * Check if provided feed url is unique and a valid url scheme
+	 * Check if provided feed url is unique and a valid HTTP/HTTPS url scheme
+	 *
 	 * @param array $current_state
 	 * @param string $url
 	 * @param int $id
+	 * @return bool
 	 */
 	private function validate_feed($current_state, $url, $id = null)
 	{
@@ -220,6 +227,32 @@ class main_module
 		{
 			return false;
 		}
+
+		$parts = parse_url($url);
+		if (empty($parts['scheme']) || !in_array(strtolower($parts['scheme']), array('http', 'https'), true))
+		{
+			return false;
+		}
+
+		if (empty($parts['host']))
+		{
+			return false;
+		}
+
+		$host = strtolower($parts['host']);
+		if ($host === 'localhost' || $host === '127.0.0.1' || $host === '::1')
+		{
+			return false;
+		}
+
+		if (filter_var($host, FILTER_VALIDATE_IP) !== false)
+		{
+			if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false)
+			{
+				return false;
+			}
+		}
+
 		if (is_array($current_state))
 		{
 			foreach ($current_state as $source_id => $source)

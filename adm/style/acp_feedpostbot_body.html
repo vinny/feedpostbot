@@ -66,7 +66,7 @@
 		<dl>
 			<dt><label for="add_feed">{{ lang('FPB_FEED_URL') }}{{ lang('COLON') }}</label></dt>
 			<dd>
-				<input type="url" id="add_feed" name="add_feed" value="" class="inputbox autowidth" size="50" placeholder="https://www.phpbb.com/feeds/rss/" required />
+				<input type="url" id="add_feed" name="add_feed" value="" class="inputbox autowidth" size="50" placeholder="{{ lang('FPB_FEED_URL_PLACEHOLDER')|e('html_attr') }}" required />
 				<input class="button1" type="submit" name="submit" value="{{ lang('SUBMIT') }}" />
 			</dd>
 		</dl>
@@ -117,8 +117,8 @@
 					<td class="text-center"><input type="number" min="0" name="{{ feed.ID }}_user_id" value="{{ feed.USER_ID }}" class="inputbox autowidth" size="4" /></td>
 					<td class="text-center"><input type="number" min="0" name="{{ feed.ID }}_textlimit" value="{{ feed.TEXTLIMIT }}" class="inputbox autowidth" size="5" /></td>
 					<td class="text-center"><input type="number" min="0" name="{{ feed.ID }}_timeout" value="{{ feed.TIMEOUT }}" class="inputbox autowidth" size="4" /></td>
-					<td class="text-center"><input type="checkbox" class="radio" name="{{ feed.ID }}_curdate"{% if feed.S_CURDATE %} checked="checked"{% endif %} title="{{ lang('FPB_CURDATE_EXPLAIN') }}" /></td>
-					<td class="text-center"><input type="checkbox" class="radio" name="{{ feed.ID }}_append_link"{% if feed.S_APPEND_LINK %} checked="checked"{% endif %} title="{{ lang('FPB_APPEND_LINK_EXPLAIN') }}" /></td>
+					<td class="text-center"><input type="checkbox" class="radio" name="{{ feed.ID }}_curdate"{% if feed.S_CURDATE %} checked="checked"{% endif %} title="{{ lang('FPB_CURDATE_EXPLAIN')|e('html_attr') }}" /></td>
+					<td class="text-center"><input type="checkbox" class="radio" name="{{ feed.ID }}_append_link"{% if feed.S_APPEND_LINK %} checked="checked"{% endif %} title="{{ lang('FPB_APPEND_LINK_EXPLAIN')|e('html_attr') }}" /></td>
 					<td class="text-center"><a href="{{ feed.U_DELETE }}" data-ajax="row_delete">{{ ICON_DELETE|raw }}</a></td>
 				</tr>
 			{% else %}
