@@ -118,7 +118,7 @@ class main_module
 						$url = $request->variable($id . '_url', '', true);
 						if (!$this->validate_feed($current_state, $url, $id))
 						{
-							trigger_error('FPB_FEED_URL_INVALID');
+							trigger_error($user->lang('FPB_FEED_URL_INVALID') . adm_back_link($this->u_action), E_USER_WARNING);
 						}
 						$type = $current_state[$id]['type'];
 						if ($url !== $current_state[$id]['url'])
@@ -162,7 +162,7 @@ class main_module
 			else
 			{
 				// Confirm
-				confirm_box(false, $user->lang['CONFIRM_OPERATION'], build_hidden_fields(array(
+				confirm_box(false, $user->lang('CONFIRM_OPERATION'), build_hidden_fields(array(
 					'id'        => $request->variable('id', 0),
 					'action'    => 'delete',
 				)));
