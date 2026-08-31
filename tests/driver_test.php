@@ -10,7 +10,7 @@
 
 namespace ger\feedpostbot\tests;
 
-if (!function_exists('utf8_htmlspecialchars'))
+if (!function_exists('\ger\feedpostbot\tests\utf8_htmlspecialchars') && !function_exists('utf8_htmlspecialchars'))
 {
 	function utf8_htmlspecialchars($value)
 	{
@@ -158,7 +158,7 @@ class driver_test extends \phpbb_test_case
 
 	public function test_detect_feed_type_rdf()
 	{
-		$rdf_xml = '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><channel></channel></rdf:RDF>';
+		$rdf_xml = '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"><channel rdf:about="https://example.com"><title>RDF Feed</title></channel></rdf:RDF>';
 		$type = $this->driver->detect_feed_type('https://example.com/rdf.xml', $rdf_xml);
 		$this->assertEquals('rdf', $type);
 	}

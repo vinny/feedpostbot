@@ -250,14 +250,30 @@ class driver
 			return false;
 		}
 
-		$type = $feed->get_type();
-		if (defined('SIMPLEPIE_TYPE_ATOM_10') && ($type & (SIMPLEPIE_TYPE_ATOM_10 | SIMPLEPIE_TYPE_ATOM_03)))
+		$type = (int) $feed->get_type();
+		$atom_mask = defined('\SimplePie\SimplePie::TYPE_ATOM_ALL') ? \SimplePie\SimplePie::TYPE_ATOM_ALL : (defined('SIMPLEPIE_TYPE_ATOM_ALL') ? SIMPLEPIE_TYPE_ATOM_ALL : 768);
+		$rdf_mask = defined('\SimplePie\SimplePie::TYPE_RSS_RDF') ? \SimplePie\SimplePie::TYPE_RSS_RDF : (defined('SIMPLEPIE_TYPE_RSS_RDF') ? SIMPLEPIE_TYPE_RSS_RDF : 65);
+
+		if ($type === 64 || $type === 65 || ($type !== 1023 && ($type & $rdf_mask)))
+		{
+			return 'rdf';
+		}
+
+		if ($type !== 1023 && ($type & $atom_mask))
 		{
 			return 'atom';
 		}
-		else if (defined('SIMPLEPIE_TYPE_RSS_10') && ($type & SIMPLEPIE_TYPE_RSS_10))
+
+		if ($type === 1023 && !empty($raw_data))
 		{
-			return 'rdf';
+			if (stripos($raw_data, '<rdf:RDF') !== false)
+			{
+				return 'rdf';
+			}
+			else if (stripos($raw_data, '<feed') !== false)
+			{
+				return 'atom';
+			}
 		}
 
 		return 'rss';
@@ -643,7 +659,11 @@ class driver
 		$string = preg_replace('/\s+/', ' ', $string);
 
 		// Ensure HTML special characters are safely escaped for topic title storage
-		return trim(utf8_htmlspecialchars($string));
+		if (function_exists('utf8_htmlspecialchars'))
+		{
+			return trim(utf8_htmlspecialchars($string));
+		}
+		return trim(htmlspecialchars((string) $string, ENT_COMPAT, 'UTF-8'));
 	}
 
 	/**
