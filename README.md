@@ -14,20 +14,27 @@
 
 - phpBB 3.3.0 or higher
 - PHP 7.2 to PHP 8.4
-- PHP `SimpleXML` extension (`ext-simplexml`)
+- PHP XML and cURL/allow_url_fopen support
+- `simplepie/simplepie` (bundled/managed via Composer)
 
 ## Installation
 
 ### 1. Download & Extract
-Download the [latest release zip](https://github.com/vinny/feedpostbot/archive/refs/heads/master.zip).
+Download the [latest release zip](https://github.com/vinny/feedpostbot/archive/refs/heads/master.zip) or clone the repository.
 
 ### 2. Copy Files
-Extract the archive into your phpBB installation directory under `ext/ger/feedpostbot`:
+Extract or copy the files into your phpBB installation directory under `ext/ger/feedpostbot`:
 ```text
 phpBB_root/ext/ger/feedpostbot/
 ```
 
-### 3. Enable Extension
+### 3. Install Dependencies
+Run Composer in the extension directory to install required dependencies:
+```bash
+composer install --no-dev --optimize-autoloader
+```
+
+### 4. Enable Extension
 1. Log into your phpBB **Admin Control Panel (ACP)**.
 2. Navigate to **Customise** > **Extension Management** > **Extensions**.
 3. Locate **Feed post bot** under Disabled Extensions and click **Enable**.

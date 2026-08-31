@@ -120,10 +120,14 @@ class main_module
 						{
 							trigger_error('FPB_FEED_URL_INVALID');
 						}
-						$type = strtolower($request->variable($id . '_type', $current_state[$id]['type']));
-						if (!in_array($type, array('rss', 'atom', 'rdf'), true))
+						$type = $current_state[$id]['type'];
+						if ($url !== $current_state[$id]['url'])
 						{
-							$type = $current_state[$id]['type'];
+							$detected_type = $feedpostbot->detect_feed_type($url);
+							if ($detected_type !== false)
+							{
+								$type = $detected_type;
+							}
 						}
 						$new_state[$id] = array(
 							'url' => $url,
@@ -194,7 +198,7 @@ class main_module
 				 * @since 1.0.1
 				 */
 				$vars = array('id', 'source', 'block_vars');
-				$event_data = $this->phpbb_dispatcher->trigger_event('ger.feedpostbot.acp_override_feed_block_vars', compact($vars));
+				$event_data = $phpbb_dispatcher->trigger_event('ger.feedpostbot.acp_override_feed_block_vars', compact($vars));
 				if (is_array($event_data) || $event_data instanceof \ArrayAccess)
 				{
 					extract((array) $event_data);

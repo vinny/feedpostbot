@@ -100,13 +100,7 @@
 				<tr class="{% if loop.index is odd %}row1{% else %}row2{% endif %}">
 					<td class="text-center"><strong>{{ loop.index }}</strong></td>
 					<td><input type="text" name="{{ feed.ID }}_url" value="{{ feed.URL }}" class="inputbox" style="width: 95%;" /></td>
-					<td class="text-center">
-						<select name="{{ feed.ID }}_type">
-							<option value="rss"{% if feed.TYPE == 'rss' %} selected="selected"{% endif %}>{{ lang('FPB_TYPE_RSS') }}</option>
-							<option value="atom"{% if feed.TYPE == 'atom' %} selected="selected"{% endif %}>{{ lang('FPB_TYPE_ATOM') }}</option>
-							<option value="rdf"{% if feed.TYPE == 'rdf' %} selected="selected"{% endif %}>{{ lang('FPB_TYPE_RDF') }}</option>
-						</select>
-					</td>
+					<td class="text-center"><strong>{{ feed.TYPE|upper }}</strong></td>
 					<td><input type="text" name="{{ feed.ID }}_prefix" value="{{ feed.PREFIX }}" class="inputbox" style="width: 95%;" /></td>
 					<td class="text-center">
 						<select name="{{ feed.ID }}_forum_id">

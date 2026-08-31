@@ -172,321 +172,207 @@ class driver
 
 
 	/**
-	 * Get content through curl or fallback to file_get_contents
+	 * Get and configure a SimplePie instance
+	 *
 	 * @param string $url
 	 * @param int $timeout
-	 * @param bool $useragent_override
-	 * @param bool $force_file_get_contents
-	 * @return string with content data or false
+	 * @param string|null $raw_data
+	 * @return \SimplePie\SimplePie|null
 	 */
-	protected function get_content($url, $timeout = self::FEED_TIMEOUT_DEFAULT, $useragent_override = false, $force_file_get_contents = false)
+	public function get_simplepie_instance($url, $timeout = self::FEED_TIMEOUT_DEFAULT, $raw_data = null)
 	{
-		if (empty($url))
+		if (!class_exists('\SimplePie\SimplePie') && !class_exists('\SimplePie'))
 		{
-			return false;
-		}
-		$url = html_entity_decode((string) $url);
-		$parts = parse_url($url);
-		if (empty($parts['scheme']) || !in_array(strtolower($parts['scheme']), array('http', 'https'), true))
-		{
-			return false;
-		}
-
-		$default_ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-		$google_ua = 'Googlebot/2.1 (+http://www.google.com/bot.html)';
-		$user_agent = $useragent_override ? $google_ua : $default_ua;
-
-		if (!function_exists('curl_init') || $force_file_get_contents)
-		{
-			$opts = array(
-				'http' => array(
-					'timeout'    => (int) $timeout,
-					'user_agent' => $user_agent,
-				),
-			);
-			$context = stream_context_create($opts);
-			$data = @file_get_contents($url, false, $context);
-		}
-		else
-		{
-			$curl = curl_init($url);
-
-			curl_setopt($curl, CURLOPT_FAILONERROR, true);
-			curl_setopt($curl, CURLOPT_FOLLOWLOCATION, true);
-			curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-			curl_setopt($curl, CURLOPT_TIMEOUT, (int) $timeout);
-			curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, (int) $timeout);
-			curl_setopt($curl, CURLOPT_USERAGENT, $user_agent);
-
-			$data = curl_exec($curl);
-			curl_close($curl);
-			if (empty($data))
+			$autoloader = __DIR__ . '/../vendor/autoload.php';
+			if (file_exists($autoloader))
 			{
-				// Try it posing as Google
-				if (!$useragent_override)
-				{
-					return $this->get_content($url, $timeout, true);
-				}
-				return $this->get_content($url, $timeout, false, true);
+				require_once $autoloader;
+			}
+			else if (file_exists($this->phpbb_root_path . 'ext/ger/feedpostbot/vendor/autoload.php'))
+			{
+				require_once $this->phpbb_root_path . 'ext/ger/feedpostbot/vendor/autoload.php';
 			}
 		}
 
-		return $data;
+		if (!class_exists('\SimplePie\SimplePie') && !class_exists('\SimplePie'))
+		{
+			return null;
+		}
+
+		if ($raw_data === null && !empty($url))
+		{
+			$parts = parse_url($url);
+			if (empty($parts['scheme']) || !in_array(strtolower($parts['scheme']), array('http', 'https'), true))
+			{
+				return null;
+			}
+		}
+
+		/** @var \SimplePie\SimplePie $feed */
+		$feed = class_exists('\SimplePie\SimplePie') ? new \SimplePie\SimplePie() : new \SimplePie();
+		$feed->set_timeout((int) $timeout);
+		$feed->set_useragent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+		$feed->enable_cache(false);
+
+		if ($raw_data !== null)
+		{
+			$feed->set_raw_data($raw_data);
+		}
+		else
+		{
+			$feed->set_feed_url($url);
+		}
+
+		$feed->force_feed(true);
+		$feed->set_output_encoding('UTF-8');
+		$feed->init();
+		$feed->handle_content_type();
+
+		return $feed;
 	}
 
 	/**
-	 * Parse a feed
+	 * Autodetect feed type using SimplePie
+	 *
+	 * @param string $url
+	 * @param string|null $raw_data
+	 * @return string|false
+	 */
+	public function detect_feed_type($url, $raw_data = null)
+	{
+		$feed = $this->get_simplepie_instance($url, self::FEED_TIMEOUT_DEFAULT, $raw_data);
+		if (!$feed || $feed->error())
+		{
+			return false;
+		}
+
+		$type = $feed->get_type();
+		if (defined('SIMPLEPIE_TYPE_ATOM_10') && ($type & (SIMPLEPIE_TYPE_ATOM_10 | SIMPLEPIE_TYPE_ATOM_03)))
+		{
+			return 'atom';
+		}
+		else if (defined('SIMPLEPIE_TYPE_RSS_10') && ($type & SIMPLEPIE_TYPE_RSS_10))
+		{
+			return 'rdf';
+		}
+
+		return 'rss';
+	}
+
+	/**
+	 * Parse a feed via SimplePie and return formatted item array
+	 *
 	 * @param string $url
 	 * @param string $type
 	 * @param int $timeout
-	 * @return boolean
+	 * @return array
 	 */
-	private function parse_feed($url, $type, $timeout = self::FEED_TIMEOUT_PARSE)
+	public function parse_feed($url, $type, $timeout = self::FEED_TIMEOUT_PARSE)
 	{
-		$type = strtolower((string) $type);
-		if (!in_array($type, array('rss', 'atom', 'rdf'), true))
+		$feed = $this->get_simplepie_instance($url, $timeout);
+		if (!$feed)
 		{
 			return array();
 		}
 
-		// Don't throw errors but log them instead
-		libxml_use_internal_errors(true);
-
-		$data = $this->get_content($url, $timeout);
-		if (!$data)
+		if ($feed->error())
 		{
-			$this->log->add(self::LOG_CRITICAL, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_TIMEOUT, time(), array($url . ' (' . $timeout . ' s)'));
-			return array(); // Return empty array instead of false
+			$this->log_feed_error($url, (string) $feed->error());
+			return array();
 		}
-		else
+
+		$items = $feed->get_items();
+		if (empty($items))
 		{
-			$method = 'parse_' . $type;
-			return $this->$method($data, $url);
+			$this->log_feed_fetched($url);
+			return array();
 		}
-	}
 
-	/**
-	 * Autodetect feed type
-	 */
-	public function detect_feed_type($url)
-	{
-		$data = $this->get_content($url);
-
-		if (!empty($data))
+		$return = array();
+		$feed_type = strtolower((string) $type);
+		if (empty($feed_type) || !in_array($feed_type, array('rss', 'atom', 'rdf'), true))
 		{
-			// Determine feed type and proceed accordingly
-			if ((stripos($data, 'application/atom+xml')!== false) || preg_match('/xmlns=\"(.+?)Atom\"/i', $data))
+			$type_flags = $feed->get_type();
+			if (defined('SIMPLEPIE_TYPE_ATOM_10') && ($type_flags & (SIMPLEPIE_TYPE_ATOM_10 | SIMPLEPIE_TYPE_ATOM_03)))
 			{
-				return 'atom';
+				$feed_type = 'atom';
 			}
-			else if (stripos($data, '<rdf:RDF') !== false)
+			else if (defined('SIMPLEPIE_TYPE_RSS_10') && ($type_flags & SIMPLEPIE_TYPE_RSS_10))
 			{
-				return 'rdf';
+				$feed_type = 'rdf';
 			}
 			else
 			{
-				return 'rss';
+				$feed_type = 'rss';
 			}
 		}
-		return false;
-	}
 
-	/**
-	 * Parse the atom source into relevant info
-	 * @param string $data	valid ATOM XML string
-	 * @return array
-	 */
-	private function parse_atom($data, $url)
-	{
-		$return = array(); // Initialize return array
-		$content = simplexml_load_string($data, 'SimpleXMLElement', LIBXML_NOCDATA | LIBXML_NONET);
-		if ($content === false)
+		foreach ($items as $item)
 		{
-			$this->log_xml_error($url);
-			return array(); // Return empty array instead of false
-		}
-		$ns = $content->getNamespaces(true);
+			$guid = $this->prop_to_string($item->get_id());
+			$title = $this->prop_to_string($item->get_title());
+			$link = $this->prop_to_string($item->get_permalink());
+			$description = $item->get_content(true);
+			if ($description === null || $description === '')
+			{
+				$description = $item->get_description(true);
+			}
+			if ($description === null || $description === '')
+			{
+				$description = $item->get_title();
+			}
+			$description = $this->prop_to_string($description);
+			$date_u = $item->get_date('U');
+			$pubDate = ($date_u !== null && $date_u !== false) ? (int) $date_u : 0;
+			$author_obj = $item->get_author();
+			$author = $author_obj ? $this->prop_to_string($author_obj->get_name()) : '';
 
-		// If there are no entries, return empty array safely
-		if (empty($content->entry))
-		{
-			return array();
-		}
-
-		foreach ($content->entry as $item)
-		{
 			$append = array(
-				'guid' => $this->prop_to_string($item->id),
-				'title' => strip_tags($this->prop_to_string($item->title)),
-				'link' => $this->prop_to_string($item->link->attributes()->href),
-				'description' =>  $this->get_item_description($item, $ns),
-				'pubDate' => empty($item->updated) ? 0 : $this->prop_to_string($item->updated),
+				'guid'        => $guid,
+				'title'       => $title,
+				'link'        => $link,
+				'description' => $description,
+				'pubDate'     => $pubDate,
+				'author'      => $author,
 			);
 
 			/**
-			 * Modify the fetched ATOM item before it's added to the return list
+			 * Modify the fetched feed item before it's added to the return list
 			 *
-			 * @event ger.feedpostbot.parse_atom_append
+			 * @event ger.feedpostbot.parse_item_append
 			 * @var  object item   item as found in source
 			 * @var  array  append Array of properties to be sent to the post_message function
-			 * @since 1.0.1
+			 * @since 1.1.0
 			 */
 			$vars = array('item', 'append');
-			$event_data = $this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_atom_append', compact($vars));
+			$event_data = $this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_item_append', compact($vars));
 			if (is_array($event_data) || $event_data instanceof \ArrayAccess)
 			{
 				extract((array) $event_data);
 			}
 
-			// Add it to the list
-			$return[] = $append;
-		}
-
-		$this->log_feed_fetched($url);
-		return $return;
-	}
-
-	/**
-	 * Parse the RDF source into relevant info
-	 * @param string $data	valid RDF XML string
-	 * @return array
-	 */
-	private function parse_rdf($data, $url)
-	{
-		$return = array(); // Initialize return array
-		// RDF default hasn't dates. Most use a DC or SY namespace but SimpleXML doesn't handle those
-		$find = array('dc:date>', 'sy:date>');
-
-		$content = simplexml_load_string(str_replace($find, 'date>', $data), 'SimpleXMLElement', LIBXML_NOCDATA | LIBXML_NONET);
-		if ($content === false)
-		{
-			$this->log_xml_error($url);
-			return array(); // Return empty array instead of false
-		}
-		$ns = $content->getNamespaces(true);
-
-		// If there are no items, return empty array safely
-		if (empty($content->item))
-		{
-			return array();
-		}
-
-		foreach ($content->item as $item)
-		{
-			$append = array(
-				'title' => $this->prop_to_string($item->title),
-				'link' => $this->prop_to_string($item->link),
-				'description' =>  $this->get_item_description($item, $ns),
-				'pubDate' => empty($item->date) ? ( empty($content->channel->date) ? 0 : $this->prop_to_string($content->channel->date) ) : $this->prop_to_string($item->date), // Fallback galore
-			);
-
 			/**
-			 * Modify the fetched RDF item before it's added to the return list
+			 * Modify the fetched feed item before it's added to the return list (Backwards-compatible event)
 			 *
+			 * @event ger.feedpostbot.parse_rss_append
+			 * @event ger.feedpostbot.parse_atom_append
 			 * @event ger.feedpostbot.parse_rdf_append
 			 * @var  object item   item as found in source
 			 * @var  array  append Array of properties to be sent to the post_message function
 			 * @since 1.0.1
 			 */
-			$vars = array('item', 'append');
-			$event_data = $this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_rdf_append', compact($vars));
+			$event_name = 'ger.feedpostbot.parse_' . $feed_type . '_append';
+			$event_data = $this->phpbb_dispatcher->trigger_event($event_name, compact($vars));
 			if (is_array($event_data) || $event_data instanceof \ArrayAccess)
 			{
 				extract((array) $event_data);
 			}
 
-			// Add it to the list
 			$return[] = $append;
 		}
+
 		$this->log_feed_fetched($url);
 		return $return;
-	}
-
-	/**
-	 * Parse the RSS source into relevant info
-	 * @param string $data	valid RSS XML string
-	 * @return array
-	 */
-	private function parse_rss($data, $url)
-	{
-		$return = array(); // Initialize return array
-		$content = simplexml_load_string($data, 'SimpleXMLElement', LIBXML_NOCDATA | LIBXML_NONET);
-		if ($content === false)
-		{
-			$this->log_xml_error($url);
-			return array(); // Return empty array instead of false
-		}
-		$ns = $content->getNamespaces(true);
-
-		// If there are no item elements, return empty array safely
-		if (empty($content->channel->item))
-		{
-			return array();
-		}
-
-		foreach ($content->channel->item as $item)
-		{
-			$append = array(
-				'guid' => $this->prop_to_string($item->guid),
-				'title' => $this->prop_to_string($item->title),
-				'link' => $this->prop_to_string($item->link),
-				'description' =>  $this->get_item_description($item, $ns),
-				'pubDate' => $this->prop_to_string($item->pubDate),
-			);
-
-			/**
-			 * Modify the fetched RSS item before it's added to the return list
-			 *
-			 * @event ger.feedpostbot.parse_rss_append
-			 * @var  object item   item as found in source
-			 * @var  array  append Array of properties to be sent to the post_message function
-			 * @since 1.0.1
-			 */
-			$vars = array('item', 'append');
-			$event_data = $this->phpbb_dispatcher->trigger_event('ger.feedpostbot.parse_rss_append', compact($vars));
-			if (is_array($event_data) || $event_data instanceof \ArrayAccess)
-			{
-				extract((array) $event_data);
-			}
-
-			// Add it to the list
-			$return[] = $append;
-		}
-		$this->log_feed_fetched($url);
-		return $return;
-
-	}
-
-	/**
-	 * Get some description with fallbacks for fallbacks
-	 * @param object $item
-	 * @param object $ns
-	 * @return string
-	 */
-	private function get_item_description($item, $ns = null)
-	{
-		if ( (!empty($ns['content'])) && $item->children($ns['content'])->encoded)
-		{
-			return $this->prop_to_string($item->children($ns['content'])->encoded);
-		}
-		if (!empty($item->description))
-		{
-			return $this->prop_to_string($item->description);
-		}
-		if (!empty($item->content))
-		{
-			return $this->prop_to_string($item->content);
-		}
-		if (!empty($item->summary))
-		{
-			return $this->prop_to_string($item->summary);
-		}
-		if (!empty($item->title))
-		{
-			return $this->prop_to_string($item->title);
-		}
-		// Still here?
-		return '';
 	}
 
 
@@ -550,29 +436,30 @@ class driver
 	/**
 	 * Check if this is the latest item
 	 * Use guid if available, fallback to pubDate & link
-	 * @param object $item
+	 *
+	 * @param array $item
 	 * @param array $current
 	 * @return bool
 	 */
 	private function is_handled($item, $current)
 	{
-		if ( (empty($current['link'])) && (empty($current['pubDate'])) && (empty($current['guid'])) )
+		if (empty($current['link']) && empty($current['pubDate']) && empty($current['guid']))
 		{
 			return false;
 		}
-		if (!empty($item['guid']) && ($this->prop_to_string($item['guid']) == $current['guid']))
+		if (!empty($item['guid']) && !empty($current['guid']) && ((string) $item['guid'] === (string) $current['guid']))
 		{
 			return true;
 		}
-		else if (($item['pubDate'] == $current['pubDate']) && ($item['link'] == $current['link']))
+		if (!empty($item['link']) && !empty($current['link']) && ((string) $item['link'] === (string) $current['link']))
 		{
+			if (!empty($item['pubDate']) && !empty($current['pubDate']))
+			{
+				return (string) $item['pubDate'] === (string) $current['pubDate'];
+			}
 			return true;
 		}
-		else if ($item['link'] == $current['link'])
-		{
-			return true;
-		}
-		else if (!empty($item['pubDate']) && (strtotime($item['pubDate']) < strtotime($current['pubDate'])))
+		if (!empty($item['pubDate']) && !empty($current['pubDate']) && (int) $item['pubDate'] <= (int) $current['pubDate'])
 		{
 			return true;
 		}
@@ -643,7 +530,7 @@ class driver
 			$post_time = 0;
 			if (empty($source['curdate']) && !empty($rss_item['pubDate']))
 			{
-				$ts = strtotime($rss_item['pubDate']);
+				$ts = is_numeric($rss_item['pubDate']) ? (int) $rss_item['pubDate'] : strtotime((string) $rss_item['pubDate']);
 				if ($ts !== false && $ts > 0)
 				{
 					$post_time = (int) $ts;
@@ -709,17 +596,13 @@ class driver
 	 * @param mixed $prop
 	 * @return string
 	 */
-	private function prop_to_string($prop)
+	public function prop_to_string($prop)
 	{
 		if (is_null($prop))
 		{
 			return '';
 		}
-		if ($prop instanceof \SimpleXMLElement)
-		{
-			$prop = (string) $prop;
-		}
-		else if (is_array($prop))
+		if (is_array($prop))
 		{
 			$prop = isset($prop[0]) ? (string) $prop[0] : '';
 		}
@@ -972,23 +855,15 @@ class driver
 	}
 
 	/**
-	 * Log xml error messages and clear
+	 * Log feed error messages
+	 *
 	 * @param string $url
+	 * @param string $error_msg
 	 * @return void
 	 */
-	private function log_xml_error($url)
+	private function log_feed_error($url, $error_msg = '')
 	{
-		// Create a simple list of found errors
-		$xml_errors = '';
-		foreach (libxml_get_errors() as $error)
-		{
-			$xml_errors .= $error->message . "\n";
-		}
-		$this->log->add(self::LOG_CRITICAL, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_ERROR, time(), array($url, $xml_errors));
-
-		// Clear libxml error buffer
-		libxml_clear_errors();
-		return;
+		$this->log->add(self::LOG_CRITICAL, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_ERROR, time(), array($url, (string) $error_msg));
 	}
 
 	/**
