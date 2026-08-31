@@ -192,6 +192,10 @@ class driver
 			{
 				require_once $this->phpbb_root_path . 'ext/ger/feedpostbot/vendor/autoload.php';
 			}
+			else if (file_exists($this->phpbb_root_path . 'vendor/autoload.php'))
+			{
+				require_once $this->phpbb_root_path . 'vendor/autoload.php';
+			}
 		}
 
 		if (!class_exists('\SimplePie\SimplePie') && !class_exists('\SimplePie'))
