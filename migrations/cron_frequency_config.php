@@ -17,7 +17,7 @@ class cron_frequency_config extends \phpbb\db\migration\migration
 		return isset($this->config['feedpostbot_cron_frequency']);
 	}
 
-	static public function depends_on()
+	public static function depends_on()
 	{
 		return array('\ger\feedpostbot\migrations\install_feedpostbot');
 	}

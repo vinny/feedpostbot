@@ -17,7 +17,7 @@ class config_lock extends \phpbb\db\migration\migration
 		return isset($this->config['feedpostbot_locked']);
 	}
 
-	static public function depends_on()
+	public static function depends_on()
 	{
 		return array('\ger\feedpostbot\migrations\install_feedpostbot');
 	}

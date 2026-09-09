@@ -57,6 +57,10 @@ class main_module
 			{
 				trigger_error('FORM_INVALID');
 			}
+			if (!\ger\feedpostbot\classes\driver::valid_number($request->variable('cron_frequency', ''), 0, 31536000))
+			{
+				trigger_error($user->lang('FPB_SETTINGS_INVALID') . adm_back_link($this->u_action), E_USER_WARNING);
+			}
 			$config->set('feedpostbot_cron_frequency', $request->variable('cron_frequency', 0));
 			$config->set('feedpostbot_enable_logs', $request->variable('enable_logs', 0));
 			trigger_error($user->lang('FPB_ACP_FEEDPOSTBOT_SETTING_SAVED') . adm_back_link($this->u_action));
@@ -67,7 +71,11 @@ class main_module
 			{
 				trigger_error('FORM_INVALID');
 			}
-			$config->set('feedpostbot_locked', 0, 1);
+			$lock_value = $config['feedpostbot_locked'];
+			if ($lock_value && ((int) $lock_value + 3600 >= time() || !$config->set_atomic('feedpostbot_locked', $lock_value, 0, false)))
+			{
+				trigger_error($user->lang('FPB_LOCK_ACTIVE') . adm_back_link($this->u_action), E_USER_WARNING);
+			}
 			trigger_error($user->lang('FPB_ACP_FEEDPOSTBOT_SETTING_SAVED') . adm_back_link($this->u_action));
 		}
 		else if ($request->is_set_post('submit'))
@@ -116,31 +124,49 @@ class main_module
 					foreach ($current_state as $id => $source)
 					{
 						$url = $request->variable($id . '_url', '', true);
-						if (!$this->validate_feed($current_state, $url, $id))
+						if (!$this->validate_feed($new_state, $url))
 						{
 							trigger_error($user->lang('FPB_FEED_URL_INVALID') . adm_back_link($this->u_action), E_USER_WARNING);
 						}
 						$type = $current_state[$id]['type'];
+						foreach (array('forum_id' => array(0, 2147483647), 'user_id' => array(1, 2147483647), 'textlimit' => array(0, 1000000), 'timeout' => array(1, 60)) as $field => $limits)
+						{
+							if (!\ger\feedpostbot\classes\driver::valid_number($request->variable($id . '_' . $field, ''), $limits[0], $limits[1]))
+							{
+								trigger_error($user->lang('FPB_SETTINGS_INVALID') . adm_back_link($this->u_action), E_USER_WARNING);
+							}
+						}
 						if ($url !== $current_state[$id]['url'])
 						{
 							$detected_type = $feedpostbot->detect_feed_type($url);
-							if ($detected_type !== false)
+							if ($detected_type === false)
 							{
-								$type = $detected_type;
+								trigger_error($user->lang('FPB_FEED_URL_INVALID') . adm_back_link($this->u_action), E_USER_WARNING);
 							}
+							$type = $detected_type;
+							unset($source['handled']);
+							$source['latest'] = array('guid' => '', 'link' => '', 'pubDate' => 0);
 						}
-						$new_state[$id] = array(
+						$new_state[$id] = array_merge($source, array(
 							'url' => $url,
 							'type' => $type,
 							'prefix' => $request->variable($id . '_prefix', '', true),
-							'forum_id' => $request->variable($id . '_forum_id', ''),
+							'forum_id' => $request->variable($id . '_forum_id', 0),
 							'user_id' => $request->variable($id . '_user_id', $user->data['user_id']),
 							'textlimit' => $request->variable($id . '_textlimit', 0),
 							'timeout' => $request->variable($id . '_timeout', 3),
 							'curdate' => strlen($request->variable($id . '_curdate', '')) > 0 ? 1 : 0,
 							'append_link' => strlen($request->variable($id . '_append_link', '')) > 0 ? 1 : 0,
 							'latest' => $source['latest'],
-						);
+						));
+					}
+				}
+				$feedpostbot->prepare_destinations($new_state);
+				foreach ($new_state as $source)
+				{
+					if (!$feedpostbot->valid_source($source))
+					{
+						trigger_error($user->lang('FPB_SETTINGS_INVALID') . adm_back_link($this->u_action), E_USER_WARNING);
 					}
 				}
 				$config_text->set('ger_feedpostbot_current_state', json_encode($new_state));
@@ -176,7 +202,7 @@ class main_module
 			{
 				$block_vars = array(
 					'ID'		=> $id,
-					'URL'		=> $source['url'],
+					'URL'		=> html_entity_decode($source['url'], ENT_QUOTES, 'UTF-8'),
 					'TYPE'		=> $source['type'],
 					'PREFIX'	=> $source['prefix'],
 					'U_DELETE'	=> $this->u_action . "&amp;action=delete&amp;id=" . $id,
@@ -222,46 +248,21 @@ class main_module
 	 *
 	 * @param array $current_state
 	 * @param string $url
-	 * @param int $id
+	 * @param int|null $id
 	 * @return bool
 	 */
 	private function validate_feed($current_state, $url, $id = null)
 	{
-		if (filter_var($url, FILTER_VALIDATE_URL) === false)
+		if (!\ger\feedpostbot\classes\http_client::valid_url(html_entity_decode($url, ENT_QUOTES, 'UTF-8')))
 		{
 			return false;
-		}
-
-		$parts = parse_url($url);
-		if (empty($parts['scheme']) || !in_array(strtolower($parts['scheme']), array('http', 'https'), true))
-		{
-			return false;
-		}
-
-		if (empty($parts['host']))
-		{
-			return false;
-		}
-
-		$host = strtolower($parts['host']);
-		if ($host === 'localhost' || $host === '127.0.0.1' || $host === '::1')
-		{
-			return false;
-		}
-
-		if (filter_var($host, FILTER_VALIDATE_IP) !== false)
-		{
-			if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false)
-			{
-				return false;
-			}
 		}
 
 		if (is_array($current_state))
 		{
 			foreach ($current_state as $source_id => $source)
 			{
-				if (($url == $source['url']) && ($id != $source_id))
+				if ($url === $source['url'] && ($id === null || (int) $id !== (int) $source_id))
 				{
 					return false;
 				}

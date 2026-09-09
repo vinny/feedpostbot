@@ -205,4 +205,3 @@ class driver_test extends \phpbb_test_case
 		$this->assertEquals('Great News!', $clean_title);
 	}
 }
-

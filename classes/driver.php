@@ -12,15 +12,16 @@ namespace ger\feedpostbot\classes;
 
 class driver
 {
-	const FEED_TIMEOUT_DEFAULT = 10;
-	const FEED_TIMEOUT_PARSE = 3;
-	const LOG_CRITICAL = 'critical';
-	const LOG_ADMIN = 'admin';
-	const LOG_FEED_FETCHED = 'FPB_LOG_FEED_FETCHED';
-	const LOG_FEED_TIMEOUT = 'FPB_LOG_FEED_TIMEOUT';
-	const LOG_FEED_ERROR = 'FPB_LOG_FEED_ERROR';
-	const LANG_READ_MORE = 'FPB_READ_MORE';
-	const LANG_SOURCE = 'FPB_SOURCE';
+	public const FEED_TIMEOUT_DEFAULT = 10;
+	public const FEED_TIMEOUT_PARSE = 3;
+	public const LOG_CRITICAL = 'critical';
+	public const LOG_ADMIN = 'admin';
+	public const LOG_FEED_FETCHED = 'FPB_LOG_FEED_FETCHED';
+	public const MAX_RUN_SECONDS = 300;
+	public const HISTORY_LIMIT = 10000;
+	public const LOG_FEED_ERROR = 'FPB_LOG_FEED_ERROR';
+	public const LANG_READ_MORE = 'FPB_READ_MORE';
+	public const LANG_SOURCE = 'FPB_SOURCE';
 
 	protected $config;
 	protected $config_text;
@@ -39,6 +40,9 @@ class driver
 
 	/** @var array Cache for user data rows */
 	protected $user_data_cache = array();
+	protected $forum_data_cache = array();
+	protected $destinations_loaded = false;
+	protected $run_deadline = 0;
 
 	/**
 	 * Constructor
@@ -138,36 +142,121 @@ class driver
 		{
 			$this->init_current_state();
 		}
-		$lock = (int) $this->config['feedpostbot_locked'];
-		if ($lock > 0)
-		{
-			return 0;
-		}
 		$counter = 0;
-		$active_user = $this->user->data['user_id'];
 		if (empty($this->current_state))
 		{
 			return 0;
 		}
-		if (!$this->config->set_atomic('feedpostbot_locked', 0, time(), false))
+		$lock = $this->create_lock();
+		if (!$lock->acquire())
 		{
 			return 0;
 		}
-		foreach ($this->current_state as $id => $source)
+		$context = $this->capture_user_context();
+		$this->run_deadline = microtime(true) + self::MAX_RUN_SECONDS;
+		try
 		{
-			// Only proceed if not disabled in ACP
-			if (!empty($source['forum_id']))
+			// Reload after acquiring the lock, since another worker may have just finished.
+			$this->init_current_state();
+			$this->prepare_destinations($this->current_state);
+			foreach ($this->current_state as $id => $source)
 			{
-				$counter += $this->fetch_items($this->parse_feed($source['url'], $source['type'], $source['timeout']), $id);
-
-				// Switch back to original user after processing each feed to avoid context leaking
-				$this->switch_user($active_user);
+				if (microtime(true) >= $this->run_deadline)
+				{
+					break;
+				}
+				if (empty($source['forum_id']))
+				{
+					continue;
+				}
+				try
+				{
+					if (!$this->valid_source($source))
+					{
+						$this->log_feed_error($source['url'], 'FPB_SETTINGS_INVALID');
+						continue;
+					}
+					$counter += $this->fetch_items($this->parse_feed($source['url'], $source['type'], $source['timeout']), $id);
+				}
+				catch (\Throwable $error)
+				{
+					$this->log_feed_error($source['url'], 'FPB_PROCESSING_FAILED');
+				}
+				finally
+				{
+					$this->restore_user_context($context);
+				}
 			}
 		}
-		$this->config_text->set('ger_feedpostbot_current_state', json_encode($this->current_state));
-		$this->switch_user($active_user);
-		$this->config->set('feedpostbot_locked', 0, false);
+		finally
+		{
+			try
+			{
+				$this->save_progress();
+			}
+			finally
+			{
+				try
+				{
+					$this->restore_user_context($context);
+				}
+				finally
+				{
+					$this->run_deadline = 0;
+					$lock->release();
+				}
+			}
+		}
 		return $counter;
+	}
+
+	protected function create_lock()
+	{
+		// phpBB provides atomic ownership and recovery after a one-hour expiry.
+		return new \phpbb\lock\db('feedpostbot_locked', $this->config, $this->db);
+	}
+
+	/** Preserve concurrent ACP edits; only merge progress for unchanged feed URLs. */
+	private function save_progress()
+	{
+		$saved = json_decode($this->config_text->get('ger_feedpostbot_current_state'), true);
+		if (!is_array($saved))
+		{
+			return;
+		}
+		foreach ($this->current_state as $id => $source)
+		{
+			if (isset($saved[$id]) && $saved[$id]['url'] === $source['url'])
+			{
+				$saved[$id]['latest'] = $source['latest'];
+				if (isset($source['handled']))
+				{
+					$saved[$id]['handled'] = $source['handled'];
+				}
+			}
+		}
+		$this->config_text->set('ger_feedpostbot_current_state', json_encode($saved));
+	}
+
+	private function capture_user_context()
+	{
+		return array('data' => $this->user->data, 'timezone' => $this->user->timezone,
+			'date_format' => $this->user->date_format, 'lang_name' => $this->user->lang_name,
+			'auth' => get_object_vars($this->auth));
+	}
+
+	private function restore_user_context(array $context)
+	{
+		foreach ($context['auth'] as $property => $value)
+		{
+			$this->auth->$property = $value;
+		}
+		unset($context['auth']);
+		foreach ($context as $property => $value)
+		{
+			$this->user->$property = $value;
+		}
+		$this->language->set_user_language($context['data']['user_lang'], true);
 	}
 
 
@@ -181,6 +270,7 @@ class driver
 	 */
 	public function get_simplepie_instance($url, $timeout = self::FEED_TIMEOUT_DEFAULT, $raw_data = null)
 	{
+		$base_url = html_entity_decode($url, ENT_QUOTES, 'UTF-8');
 		if (!class_exists('\SimplePie\SimplePie') && !class_exists('\SimplePie'))
 		{
 			$autoloader = __DIR__ . '/../vendor/autoload.php';
@@ -203,36 +293,46 @@ class driver
 			return null;
 		}
 
-		if ($raw_data === null && !empty($url))
+		if ($raw_data === null)
 		{
-			$parts = parse_url($url);
-			if (empty($parts['scheme']) || !in_array(strtolower($parts['scheme']), array('http', 'https'), true))
+			try
 			{
+				$client = $this->create_http_client();
+				// Existing installations stored request strings with HTML entities.
+				$raw_data = $client->get($base_url, $timeout);
+				$base_url = $client->get_final_url();
+			}
+			catch (\RuntimeException $error)
+			{
+				if ($this->log && $this->language)
+				{
+					$this->log_feed_error($url, $error->getMessage());
+				}
 				return null;
 			}
 		}
 
 		/** @var \SimplePie\SimplePie $feed */
 		$feed = class_exists('\SimplePie\SimplePie') ? new \SimplePie\SimplePie() : new \SimplePie();
-		$feed->set_timeout((int) $timeout);
-		$feed->set_useragent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 		$feed->enable_cache(false);
-
-		if ($raw_data !== null)
-		{
-			$feed->set_raw_data($raw_data);
-		}
-		else
-		{
-			$feed->set_feed_url($url);
-		}
+		$feed->set_raw_data($raw_data);
+		$feed->set_autodiscovery_level(0);
 
 		$feed->force_feed(true);
 		$feed->set_output_encoding('UTF-8');
 		$feed->init();
-		$feed->handle_content_type();
+		// Set the base only after parsing; setting it before init() would trigger an unsafe second fetch.
+		if (http_client::valid_url($base_url))
+		{
+			$feed->set_feed_url($base_url);
+		}
 
 		return $feed;
+	}
+
+	protected function create_http_client()
+	{
+		return new http_client();
 	}
 
 	/**
@@ -406,51 +506,94 @@ class driver
 	public function fetch_items($items, $source_id)
 	{
 		$posted = 0;
-		// Improved check for items to handle false values properly
-		if (empty($items) || !is_array($items))
+		if (empty($items) || !is_array($items) || !isset($this->current_state[$source_id]))
 		{
 			return $posted;
 		}
-
-		$new_latest = array(
-			'link' => $this->prop_to_string($items[0]['link']),
-			'pubDate' => $this->prop_to_string($items[0]['pubDate']),
-			'guid' => empty($items[0]['guid']) ? '' : $items[0]['guid'],
-		);
-
-		$to_post = array();
-		// Added proper check before foreach
-		if (!empty($items) && is_array($items))
+		if (!$this->destinations_loaded)
 		{
-			foreach ($items as $item)
+			$this->prepare_destinations($this->current_state);
+		}
+		$source = &$this->current_state[$source_id];
+		if (!$this->valid_source($source))
+		{
+			return 0;
+		}
+		$context = $this->capture_user_context();
+		try
+		{
+			if (!$this->switch_user($source['user_id']))
 			{
-				if ($this->is_handled($item, $this->current_state[$source_id]['latest']))
+				return 0;
+			}
+			if (!isset($source['handled']) || !is_array($source['handled']))
+			{
+				$source['handled'] = array();
+				// Bootstrap the former single-marker history once, without reposting its older entries.
+				$past_marker = false;
+				foreach ($items as $item)
 				{
-					// We've had this one and all below
-					$this->current_state[$source_id]['latest'] = $new_latest;
+					$past_marker = $past_marker || $this->is_handled($item, $source['latest']);
+					if ($past_marker)
+					{
+						$source['handled'][$this->item_key($item)] = true;
+					}
+				}
+			}
+			// Inspect the entire feed: new items may be inserted below already known entries.
+			foreach (array_reverse($items) as $item)
+			{
+				if ($this->run_deadline && microtime(true) >= $this->run_deadline)
+				{
 					break;
 				}
-				else
+				$key = $this->item_key($item);
+				if (isset($source['handled'][$key]))
 				{
-					$to_post[] = $item;
+					continue;
 				}
+				try
+				{
+					$result = $this->post_message($item, $source_id);
+				}
+				catch (\Throwable $error)
+				{
+					$this->log_feed_error($source['url'], 'FPB_PROCESSING_FAILED');
+					break;
+				}
+				if ($result === false)
+				{
+					break;
+				}
+				// true means an event deliberately consumed the item without submitting a post.
+				$posted += $result === true ? 0 : 1;
+				$source['handled'][$key] = true;
+				$source['latest'] = array('guid' => isset($item['guid']) ? $item['guid'] : '',
+					'link' => isset($item['link']) ? $item['link'] : '', 'pubDate' => isset($item['pubDate']) ? $item['pubDate'] : 0);
 			}
 		}
-		if (!empty($to_post))
+		finally
 		{
-			$this->switch_user($this->current_state[$source_id]['user_id']);
-
-			// Reverse array to make sure that the latest item is also the newest
-			$to_post = array_reverse($to_post);
-			foreach ($to_post as $item)
+			if (isset($source['handled']))
 			{
-				$this->post_message($item, $source_id);
-				$posted++;
+				$source['handled'] = array_slice($source['handled'], -self::HISTORY_LIMIT, null, true);
 			}
+			$this->restore_user_context($context);
 		}
-
-		$this->current_state[$source_id]['latest'] = $new_latest;
 		return $posted;
+	}
+
+	private function item_key(array $item)
+	{
+		if (!empty($item['guid']))
+		{
+			return hash('sha256', 'guid:' . $item['guid']);
+		}
+		if (!empty($item['link']))
+		{
+			return hash('sha256', 'link:' . $item['link']);
+		}
+		return hash('sha256', 'content:' . json_encode($item));
 	}
 
 	/**
@@ -467,21 +610,13 @@ class driver
 		{
 			return false;
 		}
-		if (!empty($item['guid']) && !empty($current['guid']) && ((string) $item['guid'] === (string) $current['guid']))
+		if (!empty($item['guid']) && !empty($current['guid']))
 		{
-			return true;
+			return (string) $item['guid'] === (string) $current['guid'];
 		}
-		if (!empty($item['link']) && !empty($current['link']) && ((string) $item['link'] === (string) $current['link']))
+		if (!empty($item['link']) && !empty($current['link']))
 		{
-			if (!empty($item['pubDate']) && !empty($current['pubDate']))
-			{
-				return (string) $item['pubDate'] === (string) $current['pubDate'];
-			}
-			return true;
-		}
-		if (!empty($item['pubDate']) && !empty($current['pubDate']) && (int) $item['pubDate'] <= (int) $current['pubDate'])
-		{
-			return true;
+			return (string) $item['link'] === (string) $current['link'];
 		}
 		return false;
 	}
@@ -491,11 +626,11 @@ class driver
 	 *
 	 * @param array $rss_item
 	 * @param int $source_id
-	 * @return string
+	 * @return string|bool Post URL, true for an item consumed by an event, or false on failure.
 	 */
-	private function post_message($rss_item, $source_id)
+	protected function post_message($rss_item, $source_id)
 	{
-		if (empty($rss_item))
+		if (empty($rss_item) || !$this->valid_source($this->current_state[$source_id]) || empty($this->current_state[$source_id]['forum_id']))
 		{
 			return false;
 		}
@@ -606,7 +741,8 @@ class driver
 
 		if ($do_post)
 		{
-			return submit_post('post', $title, $this->user->data['username'], POST_NORMAL, $poll, $data);
+			$result = submit_post('post', $title, $this->user->data['username'], POST_NORMAL, $poll, $data);
+			return is_string($result) && $result !== '' ? $result : false;
 		}
 		return true;
 	}
@@ -663,7 +799,7 @@ class driver
 		{
 			return trim(utf8_htmlspecialchars($string));
 		}
-		return trim(htmlspecialchars((string) $string, ENT_COMPAT, 'UTF-8'));
+		return trim(utf8_htmlspecialchars((string) $string, ENT_COMPAT, 'UTF-8'));
 	}
 
 	/**
@@ -674,34 +810,26 @@ class driver
 	private function switch_user($new_user_id)
 	{
 		$new_user_id = (int) $new_user_id;
-		if (isset($this->user->data['user_id']) && $this->user->data['user_id'] == $new_user_id)
-		{
-			$this->language->add_lang('info_acp_feedpostbot', 'ger/feedpostbot');
-			return true;
-		}
 		$cur_lang = isset($this->user->data['user_lang']) ? $this->user->data['user_lang'] : (isset($this->config['default_lang']) ? $this->config['default_lang'] : 'en');
-
-		if (!isset($this->user_data_cache[$new_user_id]))
+		if (empty($this->user_data_cache[$new_user_id]))
 		{
-			$sql = 'SELECT *
-					FROM ' . USERS_TABLE . '
-					WHERE user_id = ' . (int) $new_user_id;
-			$result = $this->db->sql_query($sql);
-			$row = $this->db->sql_fetchrow($result);
-			$this->db->sql_freeresult($result);
-
-			if (!$row || !is_array($row))
-			{
-				// Target user not found (e.g. deleted account), skip user switch
-				return false;
-			}
-			$this->user_data_cache[$new_user_id] = $row;
+			return false;
 		}
-
 		$row = $this->user_data_cache[$new_user_id];
-		$row['is_registered'] = true;
+		try
+		{
+			$timezone = new \DateTimeZone($row['user_timezone']);
+		}
+		catch (\Exception $error)
+		{
+			return false;
+		}
+		$row['is_registered'] = in_array((int) $row['user_type'], array(USER_NORMAL, USER_FOUNDER), true);
+		$row['is_bot'] = (int) $row['user_type'] === USER_IGNORE;
 		$this->user->data = array_merge($this->user->data, $row);
-		$this->user->timezone = isset($row['user_timezone']) ? $row['user_timezone'] : $this->user->timezone;
+		$this->user->timezone = $timezone;
+		$this->user->date_format = $row['user_dateformat'];
+		$this->user->lang_name = $row['user_lang'];
 
 		if (isset($row['user_lang']) && $cur_lang != $row['user_lang'])
 		{
@@ -712,6 +840,53 @@ class driver
 		return true;
 	}
 
+	/** Load all destinations before processing; no per-item lookup queries. */
+	public function prepare_destinations(array $sources)
+	{
+		$users = $forums = array();
+		$this->user_data_cache = $this->forum_data_cache = $this->forum_name_cache = array();
+		foreach ($sources as $source)
+		{
+			$users[] = (int) $source['user_id'];
+			$forums[] = (int) $source['forum_id'];
+		}
+		if ($users)
+		{
+			$result = $this->db->sql_query('SELECT * FROM ' . USERS_TABLE . ' WHERE ' . $this->db->sql_in_set('user_id', array_unique($users)));
+			while ($row = $this->db->sql_fetchrow($result))
+			{
+				$this->user_data_cache[(int) $row['user_id']] = $row;
+			}
+			$this->db->sql_freeresult($result);
+		}
+		if ($forums)
+		{
+			$result = $this->db->sql_query('SELECT forum_id, forum_name, forum_type FROM ' . FORUMS_TABLE . ' WHERE ' . $this->db->sql_in_set('forum_id', array_unique($forums)));
+			while ($row = $this->db->sql_fetchrow($result))
+			{
+				$this->forum_data_cache[(int) $row['forum_id']] = $row;
+				$this->forum_name_cache[(int) $row['forum_id']] = $row['forum_name'];
+			}
+			$this->db->sql_freeresult($result);
+		}
+		$this->destinations_loaded = true;
+	}
+
+	public function valid_source(array $source)
+	{
+		$forum = filter_var($source['forum_id'], FILTER_VALIDATE_INT);
+		$user = filter_var($source['user_id'], FILTER_VALIDATE_INT);
+		return $forum !== false && $forum >= 0 && $user !== false && !empty($this->user_data_cache[$user])
+			&& ($forum === 0 || (isset($this->forum_data_cache[$forum]) && (int) $this->forum_data_cache[$forum]['forum_type'] === FORUM_POST))
+			&& self::valid_number($source['timeout'], 1, http_client::MAX_TIMEOUT)
+			&& self::valid_number($source['textlimit'], 0, 1000000);
+	}
+
+	public static function valid_number($value, $min, $max)
+	{
+		return filter_var($value, FILTER_VALIDATE_INT, array('options' => array('min_range' => $min, 'max_range' => $max))) !== false;
+	}
+
 	/**
 	 * Get forum name by id (for notifications)
 	 * @param int $id
@@ -719,22 +894,7 @@ class driver
 	 */
 	public function get_forum_name($id)
 	{
-		$id = (int) $id;
-		if (isset($this->forum_name_cache[$id]))
-		{
-			return $this->forum_name_cache[$id];
-		}
-
-		$sql = 'SELECT forum_name
-				FROM ' . FORUMS_TABLE . '
-				WHERE forum_id = ' . (int) $id;
-		$result = $this->db->sql_query($sql, 3600);
-		$row = $this->db->sql_fetchrow($result);
-		$this->db->sql_freeresult($result);
-
-		$name = empty($row['forum_name']) ? '' : $row['forum_name'];
-		$this->forum_name_cache[$id] = $name;
-		return $name;
+		return isset($this->forum_name_cache[(int) $id]) ? $this->forum_name_cache[(int) $id] : '';
 	}
 
 	/**
@@ -887,7 +1047,8 @@ class driver
 	 */
 	private function log_feed_error($url, $error_msg = '')
 	{
-		$this->log->add(self::LOG_CRITICAL, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_ERROR, time(), array($url, (string) $error_msg));
+		$this->language->add_lang('info_acp_feedpostbot', 'ger/feedpostbot');
+		$this->log->add(self::LOG_CRITICAL, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_ERROR, time(), array($url, utf8_htmlspecialchars((string) $this->language->lang($error_msg), ENT_QUOTES, 'UTF-8')));
 	}
 
 	/**

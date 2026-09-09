@@ -17,7 +17,7 @@ class enable_logs_config extends \phpbb\db\migration\migration
 		return isset($this->config['feedpostbot_enable_logs']);
 	}
 
-	static public function depends_on()
+	public static function depends_on()
 	{
 		return array('\ger\feedpostbot\migrations\cron_frequency_config');
 	}
