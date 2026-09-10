@@ -17,6 +17,7 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 define('IN_PHPBB', true);
 require $phpbb_root_path . 'includes/constants.php';
 require $phpbb_root_path . 'includes/functions.php';
+require $phpbb_root_path . 'includes/utf/utf_tools.php';
 
 spl_autoload_register(function ($class) use ($phpbb_root_path) {
 	if (strpos($class, 'phpbb\\') === 0)

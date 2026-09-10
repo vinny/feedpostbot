@@ -105,6 +105,18 @@ class http_client_test extends \phpbb_test_case
 		$this->assertTrue(\ger\feedpostbot\classes\driver::valid_number('60', 1, 60));
 	}
 
+	public function test_encoded_feed_title_stays_safe_after_entity_decoding()
+	{
+		$driver = (new \ReflectionClass(\ger\feedpostbot\classes\driver::class))->newInstanceWithoutConstructor();
+		foreach (array('&lt;img src=x onerror=alert(1)&gt;News', '&amp;lt;img src=x onerror=alert(1)&amp;gt;News',
+			'&lt;script&gt;alert(1)&lt;/script&gt;News', 'Tom &amp; Jerry') as $title)
+		{
+			$clean = $driver->clean_title($driver->prop_to_string($title));
+			$this->assertStringNotContainsString('<', $clean);
+			$this->assertStringNotContainsString('>', $clean);
+		}
+	}
+
 	public function test_request_entities_and_relative_feed_links()
 	{
 		$driver = (new \ReflectionClass(http_driver_fixture::class))->newInstanceWithoutConstructor();

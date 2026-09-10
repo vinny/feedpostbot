@@ -66,5 +66,6 @@ $lang = array_merge($lang, array(
 	'FPB_HTTP_UNSAFE'					=> 'URL vira kaže na nevaren ali nepodprt cilj.',
 	'FPB_HTTP_FAILED'					=> 'Vira ni bilo mogoče prenesti v okviru omejitev zahteve in velikosti.',
 	'FPB_HTTP_TIMEOUT'					=> 'Časovna omejitev zahteve za vir je potekla.',
+	'FPB_SAVE_CONFLICT'					=> 'Viri so se spremenili ali se obdelujejo. Osvežite stran in poskusite znova shraniti.',
 	'FPB_LOCK_ACTIVE'					=> 'Obdelava virov morda še poteka. Opuščene zaklepe sistem samodejno obnovi po eni uri.',
 ));

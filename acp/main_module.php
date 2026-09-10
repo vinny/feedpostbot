@@ -22,7 +22,6 @@ class main_module
 	public function main($id, $mode)
 	{
 		global $request, $template, $user, $phpbb_container, $config;
-		$config_text = $phpbb_container->get('config_text');
 		$feedpostbot = $phpbb_container->get('ger.feedpostbot.classes.driver');
 		$phpbb_dispatcher = $phpbb_container->get('dispatcher');
 
@@ -33,6 +32,7 @@ class main_module
 		// Fetch current feeds
 		$feedpostbot->init_current_state();
 		$current_state = $feedpostbot->current_state;
+		$original_state = $current_state;
 		if ($request->is_set_post('run_all'))
 		{
 			if (!check_form_key('ger/feedpostbot'))
@@ -114,7 +114,10 @@ class main_module
 						'guid' => '',
 					),
 				);
-				$config_text->set('ger_feedpostbot_current_state', json_encode($current_state));
+				if (!$feedpostbot->save_sources($current_state, $original_state))
+				{
+					trigger_error($user->lang('FPB_SAVE_CONFLICT') . adm_back_link($this->u_action), E_USER_WARNING);
+				}
 			}
 			else
 			{
@@ -169,7 +172,10 @@ class main_module
 						trigger_error($user->lang('FPB_SETTINGS_INVALID') . adm_back_link($this->u_action), E_USER_WARNING);
 					}
 				}
-				$config_text->set('ger_feedpostbot_current_state', json_encode($new_state));
+				if (!$feedpostbot->save_sources($new_state, $original_state))
+				{
+					trigger_error($user->lang('FPB_SAVE_CONFLICT') . adm_back_link($this->u_action), E_USER_WARNING);
+				}
 			}
 			trigger_error($user->lang('FPB_ACP_FEEDPOSTBOT_SETTING_SAVED') . adm_back_link($this->u_action));
 		}
@@ -181,7 +187,10 @@ class main_module
 				if (is_array($current_state) && isset($current_state[$id]))
 				{
 					unset($current_state[$id]);
-					$config_text->set('ger_feedpostbot_current_state', json_encode($current_state));
+					if (!$feedpostbot->save_sources($current_state, $original_state))
+					{
+						trigger_error($user->lang('FPB_SAVE_CONFLICT') . adm_back_link($this->u_action), E_USER_WARNING);
+					}
 				}
 				trigger_error($user->lang('FPB_ACP_FEEDPOSTBOT_SETTING_SAVED') . adm_back_link($this->u_action));
 			}

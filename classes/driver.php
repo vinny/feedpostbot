@@ -108,7 +108,6 @@ class driver
 			return;
 		}
 
-		$modified = false;
 		$new_state = array();
 		foreach ($this->current_state as $id => $source)
 		{
@@ -121,14 +120,9 @@ class driver
 				$new = $source;
 				$new['append_link'] = 1;
 				$new_state[$id] = $new;
-				$modified = true;
 			}
 		}
 		$this->current_state = $new_state;
-		if ($modified)
-		{
-			$this->config_text->set('ger_feedpostbot_current_state', json_encode($new_state));
-		}
 	}
 
 	/**
@@ -159,7 +153,11 @@ class driver
 			// Reload after acquiring the lock, since another worker may have just finished.
 			$this->init_current_state();
 			$this->prepare_destinations($this->current_state);
-			foreach ($this->current_state as $id => $source)
+			$queue = $this->current_state;
+			uasort($queue, function ($left, $right) {
+				return ($left['last_attempt'] ?? 0) <=> ($right['last_attempt'] ?? 0);
+			});
+			foreach ($queue as $id => $source)
 			{
 				if (microtime(true) >= $this->run_deadline)
 				{
@@ -169,6 +167,7 @@ class driver
 				{
 					continue;
 				}
+				$this->current_state[$id]['last_attempt'] = microtime(true);
 				try
 				{
 					if (!$this->valid_source($source))
@@ -229,6 +228,7 @@ class driver
 			if (isset($saved[$id]) && $saved[$id]['url'] === $source['url'])
 			{
 				$saved[$id]['latest'] = $source['latest'];
+				$saved[$id]['last_attempt'] = $source['last_attempt'] ?? 0;
 				if (isset($source['handled']))
 				{
 					$saved[$id]['handled'] = $source['handled'];
@@ -236,6 +236,53 @@ class driver
 			}
 		}
 		$this->config_text->set('ger_feedpostbot_current_state', json_encode($saved));
+	}
+
+	/** Save ACP changes against fresh progress while holding the worker's lock. */
+	public function save_sources(array $proposed, array $original)
+	{
+		$lock = $this->create_lock();
+		if (!$lock->acquire())
+		{
+			return false;
+		}
+		try
+		{
+			$fresh = $this->init_current_state();
+			$settings = function (array $sources) {
+				foreach ($sources as &$source)
+				{
+					unset($source['handled'], $source['latest'], $source['last_attempt']);
+				}
+				return $sources;
+			};
+			if ($settings($fresh) !== $settings($original))
+			{
+				return false;
+			}
+			foreach ($proposed as $id => &$source)
+			{
+				if (isset($fresh[$id]) && $fresh[$id]['url'] === $source['url'])
+				{
+					foreach (array('latest', 'handled', 'last_attempt') as $field)
+					{
+						unset($source[$field]);
+						if (isset($fresh[$id][$field]))
+						{
+							$source[$field] = $fresh[$id][$field];
+						}
+					}
+				}
+			}
+			unset($source);
+			$this->config_text->set('ger_feedpostbot_current_state', json_encode($proposed));
+			$this->current_state = $proposed;
+			return true;
+		}
+		finally
+		{
+			$lock->release();
+		}
 	}
 
 	private function capture_user_context()
@@ -256,7 +303,9 @@ class driver
 		{
 			$this->user->$property = $value;
 		}
-		$this->language->set_user_language($context['data']['user_lang'], true);
+		$language = !empty($context['lang_name']) ? $context['lang_name'] :
+			(!empty($context['data']['user_lang']) ? $context['data']['user_lang'] : (!empty($this->config['default_lang']) ? $this->config['default_lang'] : 'en'));
+		$this->language->set_user_language($language, true);
 	}
 
 
@@ -576,7 +625,15 @@ class driver
 		{
 			if (isset($source['handled']))
 			{
-				$source['handled'] = array_slice($source['handled'], -self::HISTORY_LIMIT, null, true);
+				// Never evict identifiers that are still advertised by the current feed.
+				$present = array();
+				foreach ($items as $item)
+				{
+					$present[$this->item_key($item)] = true;
+				}
+				$absent = array_diff_key($source['handled'], $present);
+				$source['handled'] = array_intersect_key($source['handled'], $present)
+					+ array_slice($absent, -self::HISTORY_LIMIT, null, true);
 			}
 			$this->restore_user_context($context);
 		}
@@ -1048,7 +1105,8 @@ class driver
 	private function log_feed_error($url, $error_msg = '')
 	{
 		$this->language->add_lang('info_acp_feedpostbot', 'ger/feedpostbot');
-		$this->log->add(self::LOG_CRITICAL, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_ERROR, time(), array($url, utf8_htmlspecialchars((string) $this->language->lang($error_msg), ENT_QUOTES, 'UTF-8')));
+		$user_id = isset($this->user->data['user_id']) ? (int) $this->user->data['user_id'] : ANONYMOUS;
+		$this->log->add(self::LOG_CRITICAL, $user_id, $this->user->ip, self::LOG_FEED_ERROR, time(), array($url, utf8_htmlspecialchars((string) $this->language->lang($error_msg))));
 	}
 
 	/**
@@ -1060,7 +1118,8 @@ class driver
 	{
 		if (!empty($this->config['feedpostbot_enable_logs']))
 		{
-			$this->log->add(self::LOG_ADMIN, $this->user->data['user_id'], $this->user->ip, self::LOG_FEED_FETCHED, time(), array($url));
+			$user_id = isset($this->user->data['user_id']) ? (int) $this->user->data['user_id'] : ANONYMOUS;
+			$this->log->add(self::LOG_ADMIN, $user_id, $this->user->ip, self::LOG_FEED_FETCHED, time(), array($url));
 		}
 	}
 }

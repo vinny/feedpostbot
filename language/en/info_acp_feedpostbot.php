@@ -66,5 +66,6 @@ $lang = array_merge($lang, array(
 	'FPB_HTTP_UNSAFE'					=> 'The feed URL resolves to an unsafe or unsupported destination.',
 	'FPB_HTTP_FAILED'					=> 'The feed could not be downloaded within the request and size limits.',
 	'FPB_HTTP_TIMEOUT'					=> 'The feed request timed out.',
+	'FPB_SAVE_CONFLICT'					=> 'The feeds changed or processing is running. Reload this page and try saving again.',
 	'FPB_LOCK_ACTIVE'					=> 'Feed processing may still be running. Abandoned locks are recovered automatically after one hour.',
 ));

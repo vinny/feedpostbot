@@ -87,6 +87,53 @@ class driver_test extends \phpbb_test_case
 		);
 	}
 
+	public function test_legacy_feed_events_receive_and_apply_item_changes()
+	{
+		$xml = '<rss version="2.0"><channel><title>Feed</title><item><guid>1</guid><title>Original</title><description>Body</description></item></channel></rss>';
+		$feed = $this->driver->get_simplepie_instance('https://example.com/feed', 3, $xml);
+		$driver = $this->getMockBuilder('\ger\feedpostbot\classes\driver')
+			->setConstructorArgs(array($this->config, $this->config_text, $this->user, $this->language,
+				$this->auth, $this->db, $this->log, './', 'php', $this->dispatcher))
+			->setMethods(array('get_simplepie_instance'))->getMock();
+		$driver->method('get_simplepie_instance')->willReturn($feed);
+		$this->dispatcher->expects($this->exactly(6))->method('trigger_event')->willReturnCallback(function ($event, $data) {
+			$this->assertArrayHasKey('item', $data);
+			$this->assertArrayHasKey('append', $data);
+			$this->assertInstanceOf('\SimplePie\Item', $data['item']);
+			$data['append']['title'] .= '|' . $event;
+			return $data;
+		});
+		foreach (array('rss', 'atom', 'rdf') as $type)
+		{
+			$items = $driver->parse_feed('https://example.com/feed', $type);
+			$this->assertSame('Original|ger.feedpostbot.parse_item_append|ger.feedpostbot.parse_' . $type . '_append', $items[0]['title']);
+		}
+	}
+
+	public function test_all_translations_preserve_both_log_arguments()
+	{
+		foreach (array('en', 'ar', 'nl', 'sl') as $locale)
+		{
+			$lang = array();
+			include __DIR__ . '/../language/' . $locale . '/info_acp_feedpostbot.php';
+			$message = sprintf($lang['FPB_LOG_FEED_ERROR'], 'URL_SENTINEL', 'ERROR_SENTINEL');
+			$this->assertStringContainsString('URL_SENTINEL', $message);
+			$this->assertStringContainsString('ERROR_SENTINEL', $message);
+		}
+	}
+
+	public function test_error_details_are_escaped_and_cli_actor_is_supported()
+	{
+		$this->user->data = array();
+		$this->language->method('lang')->willReturnArgument(0);
+		$this->log->expects($this->once())->method('add')->with('critical', ANONYMOUS,
+			$this->user->ip, 'FPB_LOG_FEED_ERROR', $this->anything(),
+			array('https://example.com/feed', '&lt;img src=x onerror=alert(1)&gt;'));
+		$method = new \ReflectionMethod($this->driver, 'log_feed_error');
+		$method->setAccessible(true);
+		$method->invoke($this->driver, 'https://example.com/feed', '<img src=x onerror=alert(1)>');
+	}
+
 	public function test_character_limiter_short_text()
 	{
 		$text = 'Short text';

@@ -67,5 +67,6 @@ $lang = array_merge($lang, array(
 	'FPB_HTTP_UNSAFE'					=> 'De feed-URL verwijst naar een onveilige of niet-ondersteunde bestemming.',
 	'FPB_HTTP_FAILED'					=> 'De feed kon niet worden gedownload binnen de aanvraag- en groottelimieten.',
 	'FPB_HTTP_TIMEOUT'					=> 'De aanvraag voor de feed heeft de tijdslimiet overschreden.',
+	'FPB_SAVE_CONFLICT'					=> 'De feeds zijn gewijzigd of worden verwerkt. Vernieuw deze pagina en probeer opnieuw op te slaan.',
 	'FPB_LOCK_ACTIVE'					=> 'De verwerking van feeds kan nog bezig zijn. Achtergebleven vergrendelingen worden na een uur automatisch hersteld.',
 ));
