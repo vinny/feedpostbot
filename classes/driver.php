@@ -181,7 +181,9 @@ class driver
 				}
 				catch (\Throwable $error)
 				{
-					$this->log_feed_error($source['url'], 'FPB_PROCESSING_FAILED');
+					$detail = $error->getMessage();
+					$msg = $detail !== '' ? $this->language->lang('FPB_PROCESSING_FAILED') . ' (' . $detail . ')' : 'FPB_PROCESSING_FAILED';
+					$this->log_feed_error($source['url'], $msg);
 				}
 				finally
 				{
@@ -621,7 +623,9 @@ class driver
 				}
 				catch (\Throwable $error)
 				{
-					$this->log_feed_error($source['url'], 'FPB_PROCESSING_FAILED');
+					$detail = $error->getMessage();
+					$msg = $detail !== '' ? $this->language->lang('FPB_PROCESSING_FAILED') . ' (' . $detail . ')' : 'FPB_PROCESSING_FAILED';
+					$this->log_feed_error($source['url'], $msg);
 					break;
 				}
 				if ($result === false)
@@ -865,8 +869,7 @@ class driver
 		// Collapse multiple whitespaces into a single space
 		$string = preg_replace('/\s+/', ' ', $string);
 
-		// Ensure HTML special characters are safely escaped for topic title storage
-		return trim(utf8_htmlspecialchars($string));
+		return trim($string);
 	}
 
 	/**
@@ -1116,7 +1119,8 @@ class driver
 	{
 		$this->language->add_lang('info_acp_feedpostbot', 'ger/feedpostbot');
 		$user_id = isset($this->user->data['user_id']) ? (int) $this->user->data['user_id'] : ANONYMOUS;
-		$this->log->add(self::LOG_CRITICAL, $user_id, $this->user->ip, self::LOG_FEED_ERROR, time(), array($url, utf8_htmlspecialchars((string) $this->language->lang($error_msg))));
+		$msg = $this->language->is_set($error_msg) ? $this->language->lang($error_msg) : (string) $error_msg;
+		$this->log->add(self::LOG_CRITICAL, $user_id, $this->user->ip, self::LOG_FEED_ERROR, time(), array($url, (string) $msg));
 	}
 
 	/**
