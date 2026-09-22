@@ -147,7 +147,9 @@ class driver
 			return 0;
 		}
 		$context = $this->capture_user_context();
-		$this->run_deadline = microtime(true) + self::MAX_RUN_SECONDS;
+		$max_time = (int) ini_get('max_execution_time');
+		$run_limit = ($max_time > 0 && $max_time < self::MAX_RUN_SECONDS) ? max(5, $max_time - 5) : self::MAX_RUN_SECONDS;
+		$this->run_deadline = microtime(true) + $run_limit;
 		try
 		{
 			// Reload after acquiring the lock, since another worker may have just finished.
@@ -225,13 +227,25 @@ class driver
 		}
 		foreach ($this->current_state as $id => $source)
 		{
-			if (isset($saved[$id]) && $saved[$id]['url'] === $source['url'])
+			$target_id = (isset($saved[$id]) && rtrim($saved[$id]['url'], '/') === rtrim($source['url'], '/')) ? $id : null;
+			if ($target_id === null)
 			{
-				$saved[$id]['latest'] = $source['latest'];
-				$saved[$id]['last_attempt'] = $source['last_attempt'] ?? 0;
+				foreach ($saved as $sid => $s)
+				{
+					if (rtrim($s['url'], '/') === rtrim($source['url'], '/'))
+					{
+						$target_id = $sid;
+						break;
+					}
+				}
+			}
+			if ($target_id !== null)
+			{
+				$saved[$target_id]['latest'] = $source['latest'];
+				$saved[$target_id]['last_attempt'] = $source['last_attempt'] ?? 0;
 				if (isset($source['handled']))
 				{
-					$saved[$id]['handled'] = $source['handled'];
+					$saved[$target_id]['handled'] = $source['handled'];
 				}
 			}
 		}
@@ -673,7 +687,7 @@ class driver
 		}
 		if (!empty($item['link']) && !empty($current['link']))
 		{
-			return (string) $item['link'] === (string) $current['link'];
+			return rtrim((string) $item['link'], '/') === rtrim((string) $current['link'], '/');
 		}
 		return false;
 	}
@@ -852,11 +866,7 @@ class driver
 		$string = preg_replace('/\s+/', ' ', $string);
 
 		// Ensure HTML special characters are safely escaped for topic title storage
-		if (function_exists('utf8_htmlspecialchars'))
-		{
-			return trim(utf8_htmlspecialchars($string));
-		}
-		return trim(utf8_htmlspecialchars((string) $string, ENT_COMPAT, 'UTF-8'));
+		return trim(utf8_htmlspecialchars($string));
 	}
 
 	/**

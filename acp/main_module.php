@@ -71,11 +71,7 @@ class main_module
 			{
 				trigger_error('FORM_INVALID');
 			}
-			$lock_value = $config['feedpostbot_locked'];
-			if ($lock_value && ((int) $lock_value + 3600 >= time() || !$config->set_atomic('feedpostbot_locked', $lock_value, 0, false)))
-			{
-				trigger_error($user->lang('FPB_LOCK_ACTIVE') . adm_back_link($this->u_action), E_USER_WARNING);
-			}
+			$config->set('feedpostbot_locked', '0');
 			trigger_error($user->lang('FPB_ACP_FEEDPOSTBOT_SETTING_SAVED') . adm_back_link($this->u_action));
 		}
 		else if ($request->is_set_post('submit'))
