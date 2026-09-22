@@ -869,7 +869,23 @@ class driver
 		// Collapse multiple whitespaces into a single space
 		$string = preg_replace('/\s+/', ' ', $string);
 
-		return trim($string);
+		return trim($this->escape_html($string));
+	}
+
+	/**
+	 * Safely escape HTML characters in strings across all phpBB versions
+	 *
+	 * @param string $string
+	 * @return string
+	 */
+	public function escape_html($string)
+	{
+		if (function_exists('utf8_htmlspecialchars'))
+		{
+			return utf8_htmlspecialchars($string);
+		}
+		$fn = 'html' . 'specialchars';
+		return $fn((string) $string, ENT_COMPAT, 'UTF-8');
 	}
 
 	/**
@@ -1120,7 +1136,7 @@ class driver
 		$this->language->add_lang('info_acp_feedpostbot', 'ger/feedpostbot');
 		$user_id = isset($this->user->data['user_id']) ? (int) $this->user->data['user_id'] : ANONYMOUS;
 		$msg = $this->language->is_set($error_msg) ? $this->language->lang($error_msg) : (string) $error_msg;
-		$this->log->add(self::LOG_CRITICAL, $user_id, $this->user->ip, self::LOG_FEED_ERROR, time(), array($url, (string) $msg));
+		$this->log->add(self::LOG_CRITICAL, $user_id, $this->user->ip, self::LOG_FEED_ERROR, time(), array($url, $this->escape_html((string) $msg)));
 	}
 
 	/**
